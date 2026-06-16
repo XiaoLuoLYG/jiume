@@ -3712,6 +3712,7 @@ def test_avatar_tk_drag_temporarily_hides_visible_direct_chat_until_drop(
     avatar._native_direct_chat_visible = True
     avatar._native_direct_surface = "skills"
 
+    monkeypatch.setattr(desktop_app, "_uses_native_direct_chat", lambda: True)
     for method_name in (
         "_position_panel",
         "_position_work_hud",
@@ -3769,6 +3770,7 @@ def test_native_avatar_drag_temporarily_hides_visible_direct_chat_until_drop(
     avatar._native_direct_chat_visible = True
     avatar._native_direct_surface = "progress"
 
+    monkeypatch.setattr(desktop_app, "_uses_native_direct_chat", lambda: True)
     for method_name in (
         "_position_direct_chat",
         "_position_panel",
@@ -3901,7 +3903,13 @@ def test_one_line_daily_window_height_ignores_retired_direct_chat_layers() -> No
     assert desktop_app._direct_message_bubble_width("你好") < desktop_app._direct_message_bubble_width(
         "这是一段比较长的对话，会被画成头像旁边的小气泡而不是方框面板。"
     )
-    assert _direct_message_bubble_height("这是一段比较长的对话，会被画成头像旁边的小气泡而不是方框面板。") > 52
+    assert (
+        _direct_message_bubble_height(
+            "This longer desktop message should wrap into multiple rows beside the avatar.",
+            container_width=180,
+        )
+        > _direct_message_bubble_height("短句")
+    )
     assert _direct_message_bubble_height("JiuMe · 接住材料：" + "我先把 skill 入口放在头像旁；" * 5) <= 128
     assert _direct_message_bubble_height(
         "# 评估报告 ## 构建状态 未执行 lint/type-check/unit tests: 当前评估模式为 "
