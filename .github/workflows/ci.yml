@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  jiume:
+    name: JiuMe focused checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package
+        run: |
+          python -m pip install -U pip setuptools wheel
+          python -m pip install -e ".[test]"
+
+      - name: Compile JiuMe modules
+        run: python -m compileall -q jiume jiuwenswarm/start_services.py
+
+      - name: Run JiuMe unit tests
+        run: python -m pytest -q --no-cov tests/unit_tests/jiume
+
+      - name: Check whitespace
+        run: git diff --check

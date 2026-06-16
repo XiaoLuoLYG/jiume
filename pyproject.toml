@@ -1,0 +1,150 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jiume"
+version = "0.1.0"
+description = "JiuMe local-first desktop digital twin built on JiuwenSwarm"
+requires-python = ">=3.11,<3.14"
+license = { text = "Apache-2.0" }
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Desktop Environment",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "chromadb>=1.5.0",
+    "ruamel.yaml>=0.18.0",
+    "lark-oapi>=1.5.3",
+    "loguru>=0.7.3",
+    "openjiuwen == 0.1.13",
+    "pgvector>=0.4.2",
+    "websockets>=12.0",
+    "psutil>=7.2.2",
+    "aiosqlite>=0.22.1",
+    "croniter>=2.0.0",
+    "python-telegram-bot>=20.0",
+    "discord.py>=2.4.0",
+    "dingtalk-stream>=0.24.3",
+    "wecom-aibot-sdk>=1.0.5",
+    "python-socks>=2.8.1",
+    "greenlet>=3.3.2",
+    "skillnet-ai==0.0.16",
+    "mutagen>=1.47.0",
+    "google-genai>=1.68.0",
+    "opentelemetry-api>=1.25.0",
+    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.25.0",
+    "sqlite-vec==0.1.6",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "openai>=2.0.0",
+    "Pillow>=11.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+a2a = ["a2a-sdk[http-server]==1.0.0"]
+desktop = ["pywebview>=5.4", "pyobjc-framework-Cocoa>=10.0"]
+dev = ["pyinstaller>=6.0.0", "pywebview>=5.4", "pyobjc-framework-Cocoa>=10.0"]
+tui = ["jiuwenswarm-tui==0.2.0"]
+distribute = ["openjiuwen[postgres,zmq]"]
+shell-ast = [
+    "tree-sitter>=0.25.0,<0.26.0",
+    "tree-sitter-bash>=0.25.0,<0.26.0",
+]
+# Same packages as [dependency-groups] test (pip install -e ".[test]")
+test = [
+    "a2a-sdk[http-server]==1.0.0",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    "pytest-html>=4.1.1",
+    "pytest-mock>=3.14.0",
+    "pytest-cov>=7.0.0",
+    "coverage>=7.7.1",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+jiuwenswarm-app = "jiuwenswarm.app:main"
+jiuwenswarm-agentserver = "jiuwenswarm.server.app_agentserver:main"
+jiuwenswarm-gateway = "jiuwenswarm.gateway.app_gateway:main"
+jiuwenswarm-web = "jiuwenswarm.channels.web.app_web:main"
+jiuwenswarm-start = "jiuwenswarm.start_services:main"
+jiuwenswarm-init = "jiuwenswarm.init_workspace:main"
+jiuwenswarm-desktop = "jiuwenswarm.channels.desktop.desktop_app:main"
+jiuwenswarm-tui = "jiuwenswarm.channels.acp.app_acp:main"
+jiuwenswarm-acp = "jiuwenswarm.gateway.channel_manager.protocol.acp.acp_connect:main"
+jiuwenswarm-acp-chat = "jiuwenswarm.acp.cli:main"
+jiuwenbox = "jiuwenbox.cli.jiuwenbox:main"
+jiuwenbox-server = "jiuwenbox.server.launcher:main"
+jiume = "jiume.desktop.app:main"
+jiume-launch = "jiume.launcher:main"
+jiume-avatar = "jiume.desktop.app:main"
+jiume-setup = "jiume.setup.server:main"
+jiume-state = "jiume.desktop.state:main"
+
+[tool.setuptools]
+# 入口脚本现在是 jiuwenswarm 包内的一部分，不需要 py-modules
+py-modules = []
+include-package-data = true
+package-dir = {"jiuwenbox" = "jiuwenbox/src/jiuwenbox"}
+
+[tool.setuptools.packages.find]
+where = [".", "jiuwenbox/src"]
+include = ["jiuwenswarm*", "jiuwenbox*", "jiume*"]
+exclude = ["jiuwenswarm.cli*", "jiuwenswarm.web*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"*" = ["LICENSE"]
+jiuwenswarm = [
+    "channels/web/frontend/dist/**/*",
+    "channels/web/frontend/dist/*",
+    # config / env 模板放在 resources 目录
+    "resources/**/*",
+    "resources/*",
+    "resources/.env.template",
+]
+jiuwenbox = [
+    "configs/**/*",
+    "configs/*",
+]
+jiume = [
+    "resources/**/*",
+    "resources/*",
+]
+
+[tool.setuptools.exclude-package-data]
+jiuwenswarm = ["channels/web/frontend/node_modules/**", "channels/web/frontend/node_modules/*"]
+
+[tool.uv.sources]
+jiuwenswarm-tui = { path = "./packages/jiuwenswarm-tui" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+]
+# Testing (keep in sync with optional-dependencies.test)
+test = [
+    "a2a-sdk[http-server]==1.0.0",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    "pytest-html>=4.1.1",
+    "pytest-mock>=3.14.0",
+    "pytest-cov>=7.0.0",
+    "coverage>=7.7.1",
+    "pyyaml>=6.0",
+]

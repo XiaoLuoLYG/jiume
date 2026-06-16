@@ -1,0 +1,51 @@
+name: Bug report
+description: Report reproducible JiuMe behavior that is broken or surprising.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please use synthetic data and redact secrets. Do not attach real `~/.jiuwenswarm/jiume/` data, API keys, personal chat exports, or private avatar photos.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Exact commands or UI actions.
+      placeholder: |
+        1. Run ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, install method, and current commit.
+      placeholder: |
+        OS:
+        Python:
+        Commit:
+        Install command:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste minimal logs or terminal output with secrets redacted.
+      render: shell

@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest an improvement to JiuMe.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user workflow does this improve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should JiuMe do?
+    validations:
+      required: true
+  - type: textarea
+    id: local_first
+    attributes:
+      label: Local-first and privacy notes
+      description: Does this read/write personal data, call external services, or require approval?
+    validations:
+      required: true
