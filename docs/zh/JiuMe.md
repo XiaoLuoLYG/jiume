@@ -1,31 +1,55 @@
-# JiuMe 人形桌面分身 MVP
+# JiuMe 实用指南
 
-JiuMe 是一个常驻桌面的个人 Agent 分身。它的日常界面刻意保持很轻：默认只显示头像，让用户愿意一直放在桌面上。Setup 和高级管理仍然保留，但日常使用不再是一排按钮或一个控制面板。
+JiuMe 是个人 Agent 的桌面层。它的日常界面刻意保持很轻：一个桌面头像、一个一句话任务入口，以及需要你审阅后才会持久写入的本地分身数据。
 
-## 已包含能力
+![JiuMe 设置预览](../assets/jiume/setup-preview.svg)
 
-- 头像常驻日常面：`jiume` 或 `jiume-avatar` 会打开透明置顶头像，支持拖动到任意屏幕，并记住位置、大小和透明度。默认不展示工具栏、按钮宫格或技能货架。
-- 一句话任务流：默认只显示头像；单击头像，输入一句话，JiuMe 会把任务交给 Agent。需要材料、确认或澄清时，它只问一个问题；完成后用一句短结果收起。
-- 安静的外壳菜单：右键和应用菜单只暴露 `设置` 和 `退出 JiuMe`。这样 JiuMe 可以长期停在桌面上，不像一个总在抢注意力的工具面板。
-- Setup 和高级设置：首次配置仍然是创建和启用分身的必经流程。模型/API、Gateway 诊断、skill 管理、artifacts、完整任务历史、桌面位置、头像身份、权限和排障入口都在 Settings/Advanced。
-- Gateway 桥接：桌面分身默认连接 `ws://127.0.0.1:19000/ws`，通过 `chat.send` 把用户输入发给真实 Agent，并把流式回复、工具调用、等待确认、完成和错误映射成头像状态与短任务胶囊。
-- 本地身份数据：每个分身会保存 profile、本地头像资产、桌面状态、最近对话和任务状态，供重启后恢复。
-
-## 快速运行
+## 第一次运行
 
 ```bash
 git clone https://github.com/XiaoLuoLYG/jiume.git
 cd jiume
 
-# 首次或依赖变更后
 uv venv --python 3.11 --seed .venv
 uv pip install -e ".[test]"
 
-# 一条命令启动 Setup、Agent/Gateway 和桌面分身
 .venv/bin/jiume-launch --open-setup
 ```
 
-安装为登录后自动出现：
+新用户优先用这一条启动命令。它会同时启动 Setup、本地 JiuwenSwarm Runtime 和桌面头像。
+
+## 日常怎么用
+
+1. 单击头像，输入一句话。
+2. 把任务发送给 Agent。
+3. 等待 JiuMe 用简短状态展示进度。
+4. 对权限、记忆或技能更新进行审阅后，再决定是否保存。
+
+JiuMe 会把 Agent 过程映射成简单状态：idle、thinking、working、waiting approval、success、error 和 sleep。目标是让桌面保持安静，同时让真实 Runtime 在背后工作。
+
+![JiuMe 桌面预览](../assets/jiume/desktop-preview.svg)
+
+## 常用命令
+
+启动完整本地体验：
+
+```bash
+.venv/bin/jiume-launch --open-setup
+```
+
+只打开配置页：
+
+```bash
+.venv/bin/jiume-setup --open
+```
+
+不连接 Gateway，只查看头像 UI：
+
+```bash
+.venv/bin/jiume --gateway-url ""
+```
+
+安装、查看或移除 macOS 登录启动项：
 
 ```bash
 .venv/bin/jiume-launch --install-login-item
@@ -33,40 +57,7 @@ uv pip install -e ".[test]"
 .venv/bin/jiume-launch --uninstall-login-item
 ```
 
-默认情况下，`jiume-launch` 会复用已运行的 Setup/Gateway，并只恢复它自己启动的子进程。调试时可以关闭恢复：
-
-```bash
-.venv/bin/jiume-launch --no-service-restart
-```
-
-如果只想分开调试，也可以分别启动：
-
-```bash
-# 启动配置页
-.venv/bin/jiume-setup --open
-
-# 新开一个终端启动桌面分身
-.venv/bin/jiume
-```
-
-如果只想离线查看分身 UI，可以关闭 Gateway 桥接：
-
-```bash
-.venv/bin/jiume --gateway-url ""
-```
-
-## 图片生成配置
-
-JiuMe 的图片生成配置可以在 Setup 页保存，也可以在启动 `jiume-setup` 前手动 export 环境变量。
-
-- `JIUME_OPENAI_API_KEY`：图片生成 API Key，优先于 `OPENAI_API_KEY`。
-- `JIUME_OPENAI_BASE_URL`：OpenAI-compatible Base URL，优先于 `OPENAI_BASE_URL`。
-- `JIUME_IMAGE_MODEL`：图片生成模型，默认 `gpt-image-2`。
-- `JIUME_IMAGE_PROVIDER`：`openai`、`mock` 或 `auto`。
-
-用户上传照片必须先勾选授权。未配置图片生成 API Key 时，JiuMe 会使用本地透明 Q 版头像资产。
-
-## 状态控制
+测试时手动切换头像状态：
 
 ```bash
 .venv/bin/jiume-state idle
@@ -78,34 +69,62 @@ JiuMe 的图片生成配置可以在 Setup 页保存，也可以在启动 `jiume
 .venv/bin/jiume-state sleep
 ```
 
-## 数据目录
+## 可选图片服务
+
+图片生成是可选能力。没有配置凭证时，JiuMe 仍会使用本地头像资产打开。
+
+```bash
+export JIUME_OPENAI_API_KEY="..."
+export JIUME_OPENAI_BASE_URL="https://api.openai.com/v1"
+export JIUME_IMAGE_MODEL="gpt-image-2"
+export JIUME_IMAGE_PROVIDER="auto"
+```
+
+Setup 也可以把这些值保存到 `~/.jiuwenswarm/jiume/config.env`。
+
+## 本地数据
+
+JiuMe 的数据默认在 `~/.jiuwenswarm/jiume/`：
 
 ```text
-~/.jiuwenswarm/
-  jiume/config.env
-  jiume/desktop_state.json
-  jiume/window_state.json
-  jiume/conversation_state.json
-  jiume/companion_state.json
-  jiume/screen_context/
-  jiume/twins/{twin_id}/profile.json
-  jiume/twins/{twin_id}/memory.json
-  jiume/twins/{twin_id}/avatar/
-  jiume/twins/{twin_id}/audit/events.jsonl
-  jiume/twins/{twin_id}/distill/jobs/{job_id}/job.json
+config.env
+desktop_state.json
+window_state.json
+conversation_state.json
+companion_state.json
+twins/{twin_id}/profile.json
+twins/{twin_id}/memory.json
+twins/{twin_id}/avatar/
+twins/{twin_id}/audit/events.jsonl
+twins/{twin_id}/distill/jobs/{job_id}/job.json
 ```
+
+不要在 issue 或 PR 里上传这个目录。里面可能包含私人身份、聊天、头像和记忆数据。
+
+## JiuMe 如何学习
+
+![JiuMe 个人蒸馏预览](../assets/jiume/distillation-preview.svg)
+
+JiuMe 可以把经过审阅的对话、任务和来源片段转化为：
+
+- profile notes
+- communication style
+- procedural memory
+- personal skill drafts
+
+最重要的规则很简单：个人学习必须先审阅，再持久写入。
+
+## 排障
+
+- 如果头像没有出现，先运行 `.venv/bin/jiume --gateway-url ""` 单独检查 UI。
+- 如果 Setup 能打开但任务不跑，重新执行 `.venv/bin/jiume-launch --open-setup`。
+- 如果测试或命令状态混乱，可以先设置临时 `JIUWENSWARM_DATA_DIR`，用干净数据目录重启。
+- 报告 bug 时请带上命令、macOS/Python 版本和可见错误，并遮盖密钥和个人数据。
 
 ## 验证
 
 ```bash
 .venv/bin/python -m compileall -q jiume jiuwenswarm/start_services.py
-.venv/bin/python -m pytest -q --no-cov tests/unit_tests/jiume/test_twin_store.py
-.venv/bin/python -m jiume.launcher --help
-.venv/bin/python -m jiume.launcher --login-item-status
+.venv/bin/python -m pytest -q --no-cov tests/unit_tests/jiume
 git diff --check
 ```
-
-## 当前 MVP 边界
-
-- JiuMe 当前优先保证低打扰的桌面日常循环，而不是把所有功能摊在头像旁。复杂控制先放在 Settings/Advanced，等交互足够轻之后再逐步回到日常面。
-- 富媒体产物编辑、远端 skill marketplace 安装、更完整的任务历史浏览，仍需要继续在高级界面里产品化。
