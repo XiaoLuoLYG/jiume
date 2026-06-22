@@ -1,0 +1,10 @@
+# Default ownership for the public JiuMe repository.
+* @XiaoLuoLYG
+
+# Keep release and trust-sensitive project surfaces owner-reviewed.
+.github/ @XiaoLuoLYG
+SECURITY.md @XiaoLuoLYG
+pyproject.toml @XiaoLuoLYG
+uv.lock @XiaoLuoLYG
+jiume/ @XiaoLuoLYG
+jiuwenswarm/start_services.py @XiaoLuoLYG
