@@ -1,27 +1,30 @@
 # Contributing to JiuMe
 
-Thanks for helping make JiuMe better. The most valuable contributions keep the project local-first, testable, and honest about what actually runs.
+Thanks for helping make JiuMe better. The best contributions make the local desktop experience clearer, safer, or easier to try.
 
-## Development Setup
+## Start Here
 
 ```bash
 git clone https://github.com/XiaoLuoLYG/jiume.git
 cd jiume
 uv venv --python 3.11 --seed .venv
 uv pip install -e ".[test]"
+.venv/bin/jiume-launch --open-setup
 ```
 
-If you do not use `uv`, a standard virtual environment also works:
+If you do not use `uv`, a normal Python 3.11 virtual environment also works.
 
-```bash
-python3.11 -m venv .venv
-.venv/bin/python -m pip install -U pip
-.venv/bin/python -m pip install -e ".[test]"
-```
+## Good First Contributions
 
-## Before Opening a Pull Request
+- Make first-run setup clearer.
+- Improve the avatar-first desktop flow.
+- Simplify docs, screenshots, or error messages.
+- Add focused tests for JiuMe behavior.
+- Fix bugs that reproduce locally without private credentials.
 
-Run the focused checks:
+## Before Opening a PR
+
+Run:
 
 ```bash
 .venv/bin/python -m compileall -q jiume jiuwenswarm/start_services.py
@@ -29,29 +32,29 @@ Run the focused checks:
 git diff --check
 ```
 
-For launcher-related changes, also run:
+For launcher changes, also run:
 
 ```bash
 .venv/bin/python -m jiume.launcher --help
 .venv/bin/python -m jiume.launcher --login-item-status
 ```
 
-## Contribution Guidelines
+## Project Rules
 
-- Keep user-facing claims grounded in real runtime behavior.
-- Prefer local-first storage and explicit user review for personal data, identity, photos, and distilled memories.
-- Do not commit generated avatar previews, `.superpowers/`, local workspace data, logs, or API keys.
-- Add or update focused tests for JiuMe behavior you change.
-- Keep JiuMe-specific code in `jiume/` unless a runtime bridge requires a small, explicit change in `jiuwenswarm/`.
-- Document any new external provider, credential, or network behavior in the README or JiuMe docs.
+- Keep product claims grounded in real local behavior.
+- Keep personal data local-first and review-gated.
+- Do not commit API keys, `~/.jiuwenswarm/jiume/` data, private photos, chat exports, logs, or local workspace files.
+- Keep JiuMe-specific code in `jiume/` unless a runtime bridge needs a small change in `jiuwenswarm/`.
+- Update README or `docs/en/JiuMe.md` / `docs/zh/JiuMe.md` when setup, commands, config, or visible behavior changes.
 
-## Pull Request Checklist
+## Issue Reports
 
-- [ ] The change has a clear user-facing reason.
-- [ ] JiuMe-focused tests pass locally or the PR explains why they could not be run.
-- [ ] No secrets, local twin data, personal chat exports, or generated private avatar assets are committed.
-- [ ] Documentation is updated when commands, setup, configuration, or product behavior changes.
+Please include:
 
-## Reporting Issues
+- the command you ran
+- OS and Python version
+- expected behavior
+- actual behavior
+- a minimal reproduction using fake data
 
-Use the GitHub issue templates when possible. Include the exact command, OS, Python version, and whether the failure happens with a clean local data directory.
+Redact secrets and personal data before posting.
