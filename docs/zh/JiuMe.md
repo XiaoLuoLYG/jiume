@@ -2,7 +2,7 @@
 
 JiuMe 是个人 Agent 的桌面层。它的日常界面刻意保持很轻：一个桌面头像、一个一句话任务入口，以及需要你审阅后才会持久写入的本地分身数据。
 
-![JiuMe 设置预览](../assets/jiume/setup-preview.svg)
+![JiuMe 一句话任务截图](../assets/jiume/one-line-real.svg)
 
 ## 第一次运行
 
@@ -27,7 +27,7 @@ uv pip install -e ".[test]"
 
 JiuMe 会把 Agent 过程映射成简单状态：idle、thinking、working、waiting approval、success、error 和 sleep。目标是让桌面保持安静，同时让真实 Runtime 在背后工作。
 
-![JiuMe 桌面预览](../assets/jiume/desktop-preview.svg)
+![JiuMe 设置面板截图](../assets/jiume/settings-real.svg)
 
 ## 常用命令
 
@@ -103,7 +103,7 @@ twins/{twin_id}/distill/jobs/{job_id}/job.json
 
 ## JiuMe 如何学习
 
-![JiuMe 个人蒸馏预览](../assets/jiume/distillation-preview.svg)
+![JiuMe 进度面板截图](../assets/jiume/progress-real.svg)
 
 JiuMe 可以把经过审阅的对话、任务和来源片段转化为：
 
