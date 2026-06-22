@@ -2,7 +2,7 @@
 
 JiuMe is the desktop layer for a personal agent. The daily surface stays small on purpose: an avatar on your desktop, a one-line task composer, and local twin data that only becomes durable after review.
 
-![JiuMe setup preview](../assets/jiume/setup-preview.svg)
+![JiuMe one-line task screenshot](../assets/jiume/one-line-real.svg)
 
 ## First Run
 
@@ -27,7 +27,7 @@ Use this path first. It starts Setup, the local JiuwenSwarm runtime, and the des
 
 JiuMe maps agent progress into simple states: idle, thinking, working, waiting for approval, success, error, and sleep. The goal is to keep the desktop surface calm while the real runtime does the work.
 
-![JiuMe desktop preview](../assets/jiume/desktop-preview.svg)
+![JiuMe settings screenshot](../assets/jiume/settings-real.svg)
 
 ## Useful Commands
 
@@ -103,7 +103,7 @@ Do not share this directory in issues or pull requests. It can contain private i
 
 ## How Learning Works
 
-![JiuMe personal distillation preview](../assets/jiume/distillation-preview.svg)
+![JiuMe progress screenshot](../assets/jiume/progress-real.svg)
 
 JiuMe can turn reviewed conversations, tasks, and source snippets into:
 
