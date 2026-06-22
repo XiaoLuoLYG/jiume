@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
-![JiuMe 桌面预览](docs/assets/jiume/desktop-preview.svg)
+![JiuMe 一句话桌面截图](docs/assets/jiume/one-line-real.svg)
 
 </div>
 
@@ -26,13 +26,13 @@ JiuMe 把个人 Agent 变成一个常驻桌面的轻量分身：一个头像入�
 
 ## 截图
 
-这些是仓库内置的静态产品预览，用来帮助新用户快速理解当前 MVP 的界面方向。运行本地应用后可以看到真实 UI。
+这些截图来自当前 JiuMe 桌面 UI 渲染器和临时本地分身，不需要云端服务。
 
-![首次设置预览](docs/assets/jiume/setup-preview.svg)
+![一句话任务截图](docs/assets/jiume/one-line-real.svg)
 
-![桌面头像预览](docs/assets/jiume/desktop-preview.svg)
+![设置面板截图](docs/assets/jiume/settings-real.svg)
 
-![个人蒸馏预览](docs/assets/jiume/distillation-preview.svg)
+![进度面板截图](docs/assets/jiume/progress-real.svg)
 
 ## 从零开始
 
