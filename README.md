@@ -8,7 +8,7 @@ Your local-first desktop twin for personal agents.
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
-![JiuMe desktop preview](docs/assets/jiume/desktop-preview.svg)
+![JiuMe one-line desktop screenshot](docs/assets/jiume/one-line-real.svg)
 
 </div>
 
@@ -26,13 +26,13 @@ It is intentionally local-first. You can open the app without cloud credentials,
 
 ## Screenshots
 
-These are static product previews included in the repo to orient first-time users. Run the app locally to see the live UI.
+These screenshots are generated from the current JiuMe desktop UI renderer with a temporary local twin. No cloud provider is required.
 
-![First-run setup preview](docs/assets/jiume/setup-preview.svg)
+![One-line task screenshot](docs/assets/jiume/one-line-real.svg)
 
-![Avatar-first desktop preview](docs/assets/jiume/desktop-preview.svg)
+![Settings screenshot](docs/assets/jiume/settings-real.svg)
 
-![Personal distillation preview](docs/assets/jiume/distillation-preview.svg)
+![Progress screenshot](docs/assets/jiume/progress-real.svg)
 
 ## Start From Zero
 
