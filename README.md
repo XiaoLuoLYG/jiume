@@ -2,74 +2,60 @@
 
 # JiuMe
 
-Local-first desktop digital twin for personal agents.
+Your local-first desktop twin for personal agents.
 
 [![CI](https://github.com/XiaoLuoLYG/jiume/actions/workflows/ci.yml/badge.svg)](https://github.com/XiaoLuoLYG/jiume/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
+![JiuMe desktop preview](docs/assets/jiume/desktop-preview.svg)
+
 </div>
 
-JiuMe is a desktop companion layer on top of the JiuwenSwarm agent runtime. It gives a personal agent a small always-on avatar, a one-line task entry point, local twin profile/state, mounted personal skills, and a review-gated personal distillation loop.
+JiuMe turns a personal agent into a small desktop companion: an always-on avatar, a one-line task box, local twin memory, mounted personal skills, and a review step before anything durable is learned.
 
-The project is intentionally local-first: runtime configuration, twin profile data, avatar assets, audit logs, and distilled personal artifacts are stored on the user's machine. External model or image-generation providers are optional and must be configured explicitly.
+It is intentionally local-first. You can open the app without cloud credentials, keep twin data on your machine, and decide when optional model or image providers are connected.
 
-## Current Status
+## Why People Try It
 
-JiuMe is an early source-release project. The desktop avatar, setup server, runtime bridge, local twin store, skill mounting, and personal distillation primitives are present. The current focus is making the local MVP reliable and transparent rather than claiming a finished consumer app.
+- **One-line daily loop**: click the avatar, type one task, and let the agent work.
+- **Desktop-native feel**: the everyday surface is an avatar, not another busy dashboard.
+- **Local twin data**: profile, avatar assets, memories, permissions, and audit logs live under `~/.jiuwenswarm/jiume/`.
+- **Review before learning**: JiuMe can distill useful context into memory or personal skills, but durable writes stay user-approved.
+- **Built on a real agent runtime**: JiuMe uses JiuwenSwarm instead of faking backend actions.
 
-Primary platform today is macOS with Python 3.11+. The underlying web/runtime services are Python-based and are tested without requiring cloud credentials.
+## Screenshots
 
-## What Is Included
+These are static product previews included in the repo to orient first-time users. Run the app locally to see the live UI.
 
-- Desktop avatar shell: a transparent, always-on-top companion window launched with `jiume` or `jiume-avatar`.
-- One-line task loop: click/type/send, then JiuMe maps agent progress, tool calls, approval waits, completion, and failures back into compact desktop states.
-- Setup server: first-run configuration for twin identity, model/image provider settings, and runtime diagnostics.
-- JiuwenSwarm runtime bridge: `chat.send` requests can carry active JiuMe twin context into the real agent path.
-- Local twin data: profile, memories, permissions, mounted skills, avatar assets, audit events, and desktop state live under `~/.jiuwenswarm/jiume/`.
-- Personal distillation engine: converts reviewed chat/task/source snippets into layered profile, style, procedural, and personal-skill artifacts before installation.
-- Tests for the JiuMe-specific runtime, twin store, setup/settings behavior, one-line companion flow, and personal distillation path.
+![First-run setup preview](docs/assets/jiume/setup-preview.svg)
 
-## Quick Start
+![Avatar-first desktop preview](docs/assets/jiume/desktop-preview.svg)
 
-Clone the repository:
+![Personal distillation preview](docs/assets/jiume/distillation-preview.svg)
+
+## Start From Zero
+
+You need Python 3.11+ and `uv`.
 
 ```bash
 git clone https://github.com/XiaoLuoLYG/jiume.git
 cd jiume
-```
 
-Create a local environment and install the project:
-
-```bash
 uv venv --python 3.11 --seed .venv
 uv pip install -e ".[test]"
-```
 
-Start setup, the JiuwenSwarm runtime, and the desktop twin:
-
-```bash
 .venv/bin/jiume-launch --open-setup
 ```
 
-For split debugging:
+What should happen:
 
-```bash
-.venv/bin/jiume-setup --open
-.venv/bin/jiume
-```
+1. The setup page opens.
+2. The local JiuwenSwarm runtime starts.
+3. The JiuMe desktop avatar appears.
+4. You can click the avatar and send a one-line task.
 
-To inspect the avatar UI without a gateway connection:
-
-```bash
-.venv/bin/jiume --gateway-url ""
-```
-
-## Configuration
-
-Image generation is optional. Without a configured provider, JiuMe uses local generated/mock avatar assets so the app can still run end to end.
-
-Relevant environment variables:
+No API key is required for the first local run. If you later want generated avatars or hosted model providers, add credentials in Setup or export:
 
 ```bash
 export JIUME_OPENAI_API_KEY="..."
@@ -78,35 +64,45 @@ export JIUME_IMAGE_MODEL="gpt-image-2"
 export JIUME_IMAGE_PROVIDER="auto"
 ```
 
-The setup UI can also persist these values to:
+For a UI-only smoke test:
 
-```text
-~/.jiuwenswarm/jiume/config.env
+```bash
+.venv/bin/jiume --gateway-url ""
 ```
 
-User photo uploads and durable personal-distillation writes are intended to be explicit, local-first, and review-gated.
+## Core Architecture
 
-## Repository Layout
-
-```text
-jiume/                         JiuMe product layer
-  desktop/                     Avatar shell, desktop state, native interactions
-  setup/                       First-run setup server
-  runtime/                     Gateway health and twin-context injection
-  twins/                       File-backed twin profile and memory store
-  skills/                      Local skill catalog and installation helpers
-  personal_distillation/       Review-gated memory/skill distillation engine
-  avatar/                      Avatar asset generation and manifests
-jiuwenswarm/                   JiuwenSwarm runtime used by JiuMe
-jiuwenbox/                     Local sandbox/proxy package used by the runtime
-tests/unit_tests/jiume/        JiuMe-focused unit tests
-docs/en/JiuMe.md               Detailed English MVP notes
-docs/zh/JiuMe.md               Detailed Chinese MVP notes
+```mermaid
+flowchart LR
+  User["You"] --> Avatar["Desktop avatar"]
+  Avatar --> Task["One-line task"]
+  Task --> Runtime["JiuwenSwarm runtime"]
+  Runtime --> Tools["Agent tools and skills"]
+  Avatar --> Twin["Local twin data"]
+  Twin --> Review["Review-gated memory and skills"]
+  Review --> Twin
 ```
 
-## Development
+The only idea you need first: JiuMe is the friendly desktop layer; JiuwenSwarm is the agent runtime; your twin data stays local unless you explicitly connect outside services.
 
-Run the focused JiuMe checks:
+## Project Map
+
+```text
+jiume/                    JiuMe product layer
+  desktop/                avatar window, task capsule, local desktop state
+  setup/                  first-run setup and settings server
+  runtime/                bridge into JiuwenSwarm
+  twins/                  local profile, memory, permissions, audit data
+  skills/                 personal skill catalog helpers
+  personal_distillation/  review-gated learning pipeline
+  avatar/                 avatar assets and manifests
+jiuwenswarm/              underlying agent runtime
+tests/unit_tests/jiume/   focused JiuMe tests
+docs/en/JiuMe.md          practical English guide
+docs/zh/JiuMe.md          practical Chinese guide
+```
+
+## Developer Check
 
 ```bash
 .venv/bin/python -m compileall -q jiume jiuwenswarm/start_services.py
@@ -114,29 +110,18 @@ Run the focused JiuMe checks:
 git diff --check
 ```
 
-Run launcher smoke commands:
+## Learn More
 
-```bash
-.venv/bin/python -m jiume.launcher --help
-.venv/bin/python -m jiume.launcher --login-item-status
-```
-
-## Documentation
-
-- [JiuMe MVP notes](docs/en/JiuMe.md)
-- [中文说明](README_CN.md)
-- [JiuwenSwarm memory docs](docs/en/Memory.md)
-- [JiuwenSwarm skill self-evolution docs](docs/en/SkillSelfEvolution.md)
-- [Testing guide](TESTING.md)
+- [Chinese README](README_CN.md)
+- [JiuMe practical guide](docs/en/JiuMe.md)
+- [Contribution guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Support](SUPPORT.md)
 
 ## Contributing
 
-Contributions are welcome when they keep the project honest about what really runs locally. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
-
-## Security
-
-Please do not publish real API keys, personal chat exports, private avatar source images, or local twin data in issues or pull requests. See [SECURITY.md](SECURITY.md) for reporting guidance.
+Contributions are welcome when they make the local experience clearer, safer, or more useful. Please keep user-facing claims grounded in real behavior and read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License
 
-JiuMe is released under the [Apache License 2.0](LICENSE). It builds on JiuwenSwarm code in this repository, which is also Apache-2.0 licensed.
+JiuMe is released under the [Apache License 2.0](LICENSE).
