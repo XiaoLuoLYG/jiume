@@ -57,7 +57,7 @@ dependencies = [
 a2a = ["a2a-sdk[http-server]==1.0.0"]
 desktop = ["pywebview>=5.4", "pyobjc-framework-Cocoa>=10.0"]
 dev = ["pyinstaller>=6.0.0", "pywebview>=5.4", "pyobjc-framework-Cocoa>=10.0"]
-tui = ["jiuwenswarm-tui==0.2.0"]
+tui = ["jiuwenswarm-tui==0.2.2"]
 distribute = ["openjiuwen[postgres,zmq]"]
 shell-ast = [
     "tree-sitter>=0.25.0,<0.26.0",
