@@ -3,7 +3,7 @@
 - [安装指南](安装指南.md)
 - [快速开始](Quickstart.md)
 - [快速开始(TUI)](Quickstart_tui.md)
-- [JiuMe 人形桌面分身 MVP](JiuMe.md)
+- [JiuMe 实用指南](JiuMe.md)
 - [TUI 使用指南](TUI使用指南.md)
 - [页面概览](页面概览.md)
 - [E2A 协议（Gateway↔Agent）](E2A-protocol.md)
