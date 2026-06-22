@@ -2,74 +2,60 @@
 
 # JiuMe
 
-本地优先的个人 Agent 桌面数字分身。
+本地优先的个人 Agent 桌面分身。
 
 [![CI](https://github.com/XiaoLuoLYG/jiume/actions/workflows/ci.yml/badge.svg)](https://github.com/XiaoLuoLYG/jiume/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
+![JiuMe 桌面预览](docs/assets/jiume/desktop-preview.svg)
+
 </div>
 
-JiuMe 是构建在 JiuwenSwarm Agent Runtime 之上的桌面分身层。它把个人 Agent 变成一个常驻桌面的轻量头像入口，支持一句话发起任务、本地分身档案与状态、挂载个人技能，以及需要用户确认的持续个人蒸馏流程。
+JiuMe 把个人 Agent 变成一个常驻桌面的轻量分身：一个头像入口、一句话任务框、本地分身记忆、可挂载的个人技能，以及任何持久学习前的用户确认。
 
-项目刻意保持本地优先：运行配置、分身档案、头像资产、审计日志、蒸馏后的个人记忆与技能草稿都存储在用户自己的机器上。外部模型或图片生成服务是可选项，必须由用户显式配置。
+它刻意保持本地优先：没有云端凭证也能打开体验；分身档案、头像资产、记忆、权限和审计日志默认保存在你自己的机器上；外部模型或图片服务需要你显式连接。
 
-## 当前状态
+## 为什么值得试
 
-JiuMe 目前是早期源码发布项目。桌面头像、Setup 服务、Runtime 桥接、本地分身存储、技能挂载和个人蒸馏基础链路已经存在。当前目标是把本地 MVP 做真实、可靠、可检查，而不是把还没产品化的能力包装成完成态。
+- **一句话日常循环**：单击头像，输入一句任务，让 Agent 继续处理。
+- **桌面原生感**：日常界面是一个头像，而不是又一个复杂控制台。
+- **本地分身数据**：profile、avatar assets、memories、permissions 和 audit logs 位于 `~/.jiuwenswarm/jiume/`。
+- **先审阅再学习**：JiuMe 可以把有用上下文沉淀成记忆或个人技能，但持久写入需要用户确认。
+- **真实 Agent Runtime**：JiuMe 复用 JiuwenSwarm，不用假的后端动作糊弄体验。
 
-目前主平台是 macOS + Python 3.11+。底层 Web/Runtime 服务是 Python 实现，核心测试不依赖云端凭证。
+## 截图
 
-## 已包含能力
+这些是仓库内置的静态产品预览，用来帮助新用户快速理解当前 MVP 的界面方向。运行本地应用后可以看到真实 UI。
 
-- 桌面头像外壳：通过 `jiume` 或 `jiume-avatar` 启动透明置顶头像。
-- 一句话任务循环：点击、输入、发送，然后把 Agent 进度、工具调用、等待审批、完成和失败映射为克制的桌面状态。
-- Setup 服务：用于首次配置分身身份、模型/图片提供方和 Runtime 诊断。
-- JiuwenSwarm Runtime 桥接：带 `twin_id` 的 `chat.send` 可以把当前 JiuMe 分身上下文注入真实 Agent 路径。
-- 本地分身数据：profile、memories、permissions、mounted skills、avatar assets、audit events 和桌面状态都位于 `~/.jiuwenswarm/jiume/`。
-- 个人蒸馏引擎：把经过审阅的聊天、任务和来源片段转化为 profile/style/procedural/personal-skill 分层产物，再由用户确认安装。
-- JiuMe 专属单元测试覆盖 runtime、twin store、setup/settings、one-line companion 和 personal distillation。
+![首次设置预览](docs/assets/jiume/setup-preview.svg)
 
-## 快速开始
+![桌面头像预览](docs/assets/jiume/desktop-preview.svg)
 
-克隆仓库：
+![个人蒸馏预览](docs/assets/jiume/distillation-preview.svg)
+
+## 从零开始
+
+你需要 Python 3.11+ 和 `uv`。
 
 ```bash
 git clone https://github.com/XiaoLuoLYG/jiume.git
 cd jiume
-```
 
-创建本地环境并安装：
-
-```bash
 uv venv --python 3.11 --seed .venv
 uv pip install -e ".[test]"
-```
 
-一条命令启动 Setup、JiuwenSwarm Runtime 和桌面分身：
-
-```bash
 .venv/bin/jiume-launch --open-setup
 ```
 
-分开调试：
+正常情况下你会看到：
 
-```bash
-.venv/bin/jiume-setup --open
-.venv/bin/jiume
-```
+1. Setup 页面打开。
+2. 本地 JiuwenSwarm Runtime 启动。
+3. JiuMe 桌面头像出现。
+4. 你可以单击头像并发送一句话任务。
 
-不连接 Gateway，只查看头像 UI：
-
-```bash
-.venv/bin/jiume --gateway-url ""
-```
-
-## 配置
-
-图片生成是可选能力。未配置图片提供方时，JiuMe 会使用本地生成/mock 头像资产，保证全链路仍可运行。
-
-相关环境变量：
+第一次本地运行不需要 API Key。之后如果想接入生成头像或托管模型，可以在 Setup 里填写，也可以导出环境变量：
 
 ```bash
 export JIUME_OPENAI_API_KEY="..."
@@ -78,35 +64,45 @@ export JIUME_IMAGE_MODEL="gpt-image-2"
 export JIUME_IMAGE_PROVIDER="auto"
 ```
 
-Setup UI 也可以把这些值保存到：
+如果只想离线查看头像 UI：
 
-```text
-~/.jiuwenswarm/jiume/config.env
+```bash
+.venv/bin/jiume --gateway-url ""
 ```
 
-用户照片上传和持久化个人蒸馏写入都应保持显式授权、本地优先和审阅确认。
+## 核心架构
 
-## 仓库结构
-
-```text
-jiume/                         JiuMe 产品层
-  desktop/                     头像外壳、桌面状态、原生交互
-  setup/                       首次配置服务
-  runtime/                     Gateway 健康检查与分身上下文注入
-  twins/                       文件存储的分身档案与记忆
-  skills/                      本地技能目录与安装辅助
-  personal_distillation/       需要审阅的记忆/技能蒸馏引擎
-  avatar/                      头像资产生成与 manifest
-jiuwenswarm/                   JiuMe 复用的 JiuwenSwarm runtime
-jiuwenbox/                     Runtime 使用的本地沙箱/proxy 包
-tests/unit_tests/jiume/        JiuMe 专属单元测试
-docs/en/JiuMe.md               英文 MVP 说明
-docs/zh/JiuMe.md               中文 MVP 说明
+```mermaid
+flowchart LR
+  User["你"] --> Avatar["桌面头像"]
+  Avatar --> Task["一句话任务"]
+  Task --> Runtime["JiuwenSwarm Runtime"]
+  Runtime --> Tools["Agent 工具和技能"]
+  Avatar --> Twin["本地分身数据"]
+  Twin --> Review["审阅后写入记忆/技能"]
+  Review --> Twin
 ```
 
-## 开发与验证
+先记住这一点就够了：JiuMe 是更友好的桌面层；JiuwenSwarm 是真实 Agent Runtime；你的分身数据默认留在本地，除非你明确接入外部服务。
 
-运行 JiuMe 重点检查：
+## 项目结构
+
+```text
+jiume/                    JiuMe 产品层
+  desktop/                头像窗口、任务胶囊、本地桌面状态
+  setup/                  首次配置和设置服务
+  runtime/                接入 JiuwenSwarm 的桥接层
+  twins/                  本地档案、记忆、权限、审计数据
+  skills/                 个人技能目录辅助
+  personal_distillation/  需要审阅的学习流水线
+  avatar/                 头像资产和 manifest
+jiuwenswarm/              底层 Agent Runtime
+tests/unit_tests/jiume/   JiuMe 专属测试
+docs/en/JiuMe.md          英文实用指南
+docs/zh/JiuMe.md          中文实用指南
+```
+
+## 开发验证
 
 ```bash
 .venv/bin/python -m compileall -q jiume jiuwenswarm/start_services.py
@@ -114,29 +110,18 @@ docs/zh/JiuMe.md               中文 MVP 说明
 git diff --check
 ```
 
-启动器 smoke check：
+## 更多文档
 
-```bash
-.venv/bin/python -m jiume.launcher --help
-.venv/bin/python -m jiume.launcher --login-item-status
-```
-
-## 文档
-
-- [JiuMe MVP 说明](docs/zh/JiuMe.md)
 - [English README](README.md)
-- [JiuwenSwarm 记忆文档](docs/zh/记忆.md)
-- [JiuwenSwarm Skill 自演进文档](docs/zh/Skill自演进.md)
-- [测试指南](TESTING.md)
+- [JiuMe 中文实用指南](docs/zh/JiuMe.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)
+- [支持说明](SUPPORT.md)
 
 ## 参与贡献
 
-欢迎贡献，但请保持项目对真实运行状态的诚实描述。提交 PR 前请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-## 安全
-
-请不要在 issue 或 PR 中发布真实 API Key、个人聊天导出、私人头像源图或本地分身数据。安全问题请参考 [SECURITY.md](SECURITY.md)。
+欢迎贡献，尤其是能让本地体验更清晰、更安全、更好用的改动。请保持用户可见描述和真实运行行为一致，提交 PR 前先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 开源协议
 
-JiuMe 使用 [Apache License 2.0](LICENSE) 发布。仓库中复用的 JiuwenSwarm 代码同样采用 Apache-2.0 协议。
+JiuMe 使用 [Apache License 2.0](LICENSE) 发布。
