@@ -10469,6 +10469,7 @@ class JiuMeDesktopAvatar:
             "table": "表格",
             "text": "文本",
             "link": "链接",
+            "payment": "支付",
             "file": "文件",
         }
         return labels.get(str(category or ""), "产物")
@@ -10848,15 +10849,15 @@ class JiuMeDesktopAvatar:
         target = gateway_event_payment_deeplink(event)
         if not target or target in self._opened_payment_deeplinks:
             return
-        self._opened_payment_deeplinks.add(target)
         try:
             opened = webbrowser.open(target)
-        except Exception as exc:  # noqa: BLE001
-            self.show_bubble(f"打不开微信支付：{_clip(str(exc), 58)}", state="error", duration=3200)
+        except Exception:  # noqa: BLE001
+            self.show_bubble("打不开微信支付，请稍后重试或在微信里手动确认。", state="error", duration=3200)
             return
         if not opened:
-            self.show_bubble("打不开微信支付，请手动确认支付链接。", state="error", duration=3200)
+            self.show_bubble("打不开微信支付，请稍后重试或在微信里手动确认。", state="error", duration=3200)
             return
+        self._opened_payment_deeplinks.add(target)
         if self._active_twin_id:
             append_audit_event(
                 self._active_twin_id,

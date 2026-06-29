@@ -211,10 +211,6 @@ def gateway_event_payment_deeplink(event: GatewayEvent) -> str:
         target = str(value or "").strip()
         if trusted_payment_deeplink(target):
             return target
-    for artifact in gateway_event_artifacts(event):
-        target = str(artifact.get("target") or "").strip()
-        if trusted_payment_deeplink(target):
-            return target
     return ""
 
 
@@ -274,10 +270,10 @@ def gateway_event_artifacts(event: GatewayEvent) -> list[dict[str, str]]:
                 item.get("path")
                 or item.get("file_path")
                 or item.get("filePath")
-                or item.get("target")
                 or item.get("url")
                 or item.get("uri")
                 or item.get("href")
+                or item.get("target")
                 or ""
             ).strip()
             label = str(

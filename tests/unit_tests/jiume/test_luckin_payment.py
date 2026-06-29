@@ -210,6 +210,22 @@ def test_luckin_gateway_event_payment_deeplink_rejects_qr_and_http() -> None:
     assert gateway_event_payment_deeplink(http_pay) == ""
 
 
+def test_luckin_gateway_event_payment_deeplink_ignores_plain_artifacts() -> None:
+    top_level_target = GatewayEvent(
+        kind="event",
+        event="chat.tool_result",
+        payload={"target": "weixin://wxpay/bizpayurl?pr=abc"},
+    )
+    artifact_target = GatewayEvent(
+        kind="event",
+        event="chat.final",
+        payload={"artifacts": [{"target": "weixin://wxpay/bizpayurl?pr=abc", "name": "微信支付"}]},
+    )
+
+    assert gateway_event_payment_deeplink(top_level_target) == ""
+    assert gateway_event_payment_deeplink(artifact_target) == ""
+
+
 def test_luckin_trusted_payment_deeplink_allows_only_wechat_pay() -> None:
     assert trusted_payment_deeplink("weixin://wxpay/bizpayurl?pr=abc")
     assert not trusted_payment_deeplink("weixin://not-pay")
@@ -226,6 +242,27 @@ def test_luckin_payment_artifact_is_payment_url() -> None:
 
     assert artifacts[0]["category"] == "payment"
     assert artifacts[0]["kind"] == "url"
+
+
+def test_luckin_payment_artifact_target_does_not_override_url() -> None:
+    event = GatewayEvent(
+        kind="event",
+        event="chat.final",
+        payload={
+            "artifacts": [
+                {
+                    "target": "weixin://wxpay/bizpayurl?pr=abc",
+                    "url": "https://example.test/receipt",
+                    "name": "订单回执",
+                }
+            ]
+        },
+    )
+
+    artifacts = gateway_event_artifacts(event)
+
+    assert artifacts[0]["target"] == "https://example.test/receipt"
+    assert artifacts[0]["category"] == "link"
 
 
 def test_luckin_desktop_opens_trusted_wechat_pay_target(monkeypatch) -> None:
@@ -266,6 +303,49 @@ def test_luckin_payment_deeplink_open_is_deduped_and_redacted(monkeypatch) -> No
 
     assert opened == ["weixin://wxpay/bizpayurl?pr=abc"]
     assert bubbles == []
+    assert activities == [("payment", "打开微信支付", "我已打开微信支付，请在微信里确认。")]
+    assert audits == [
+        (
+            "local-test-twin",
+            "luckin.payment_deeplink_opened",
+            {"scheme": "weixin", "target": "weixin://wxpay/[redacted]"},
+        )
+    ]
+
+
+def test_luckin_payment_deeplink_retries_after_failed_open(monkeypatch) -> None:
+    avatar = object.__new__(JiuMeDesktopAvatar)
+    avatar._opened_payment_deeplinks = set()
+    avatar._active_twin_id = "local-test-twin"
+    bubbles: list[str] = []
+    activities: list[tuple[str, str, str]] = []
+    audits: list[tuple[str, str, dict[str, Any]]] = []
+    opened: list[str] = []
+    open_results = iter([False, True])
+    avatar.show_bubble = lambda text, **_kwargs: bubbles.append(str(text))
+    avatar._record_activity = lambda kind, title, detail="": activities.append((kind, title, detail))
+
+    def open_once(target: str) -> bool:
+        opened.append(target)
+        return next(open_results)
+
+    monkeypatch.setattr(desktop_app.webbrowser, "open", open_once)
+    monkeypatch.setattr(
+        desktop_app,
+        "append_audit_event",
+        lambda twin_id, event_type, payload: audits.append((twin_id, event_type, payload)),
+    )
+    event = GatewayEvent(
+        kind="event",
+        event="chat.tool_result",
+        payload={"result": {"payOrderUrl": "weixin://wxpay/bizpayurl?pr=abc"}},
+    )
+
+    JiuMeDesktopAvatar._maybe_open_payment_deeplink(avatar, event)
+    JiuMeDesktopAvatar._maybe_open_payment_deeplink(avatar, event)
+
+    assert opened == ["weixin://wxpay/bizpayurl?pr=abc", "weixin://wxpay/bizpayurl?pr=abc"]
+    assert bubbles == ["打不开微信支付，请稍后重试或在微信里手动确认。"]
     assert activities == [("payment", "打开微信支付", "我已打开微信支付，请在微信里确认。")]
     assert audits == [
         (
