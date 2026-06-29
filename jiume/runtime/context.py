@@ -43,10 +43,12 @@ def _context_block(profile: dict[str, Any], *, query: str = "") -> str:
         luckin_note = (
             "Luckin official MCP exception: use only these Luckin official MCP tools when needed: "
             "queryShopList, searchProductForMcp, switchProduct, queryProductDetailInfo, "
-            "previewOrder, createOrder, queryOrderDetailInfo. If previewOrder is clear and within policy, "
-            "opening returned `weixin://wxpay/` payOrderUrl is allowed. "
+            "previewOrder, createOrder, queryOrderDetailInfo, cancelOrder. If Luckin previewOrder is clear "
+            "and within policy, opening the `weixin://wxpay/` payOrderUrl returned by Luckin createOrder is allowed. "
             "The user's WeChat Pay confirmation is the payment approval. "
             "Ask before createOrder only when store/item/price/coupon/address/token ambiguous. "
+            "When the user cancels, payment fails, or an unpaid order should not remain open, "
+            "use queryOrderDetailInfo / cancelOrder to check status or cancel. "
             "Do not use QR code payment as the default path.\n"
         )
     return (

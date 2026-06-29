@@ -53,8 +53,10 @@ def test_luckin_order_skill_adds_prompt_boundary() -> None:
     block = _context_block(profile, query="帮我点一杯常喝的瑞幸")
 
     assert "Luckin official MCP" in block
+    assert "cancelOrder" in block
     assert "WeChat Pay confirmation is the payment approval" in block
     assert "Do not use QR code payment as the default path" in block
+    assert "Ask before external actions, irreversible changes, calendar changes, payment" in block
 
 
 def test_luckin_order_boundary_requires_mounted_skill() -> None:
@@ -71,6 +73,7 @@ def test_luckin_order_boundary_requires_mounted_skill() -> None:
     assert "Luckin official MCP" not in block
     assert "WeChat Pay confirmation is the payment approval" not in block
     assert "Do not use QR code payment as the default path" not in block
+    assert "Ask before external actions, irreversible changes, calendar changes, payment" in block
 
 
 def test_luckin_mcp_config_skips_without_token(monkeypatch) -> None:
