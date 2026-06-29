@@ -69,18 +69,15 @@ Manually set the avatar state while testing:
 .venv/bin/jiume-state sleep
 ```
 
-## Optional Image Provider
+## Avatar Pet Package
 
-Image generation is optional. Without credentials, JiuMe still opens with local avatar assets.
+JiuMe does not generate avatar art in-app. Generate a Codex pet with `hatch-pet` or download an existing Codex pet package, then import its folder or ZIP:
 
 ```bash
-export JIUME_OPENAI_API_KEY="..."
-export JIUME_OPENAI_BASE_URL="https://api.openai.com/v1"
-export JIUME_IMAGE_MODEL="gpt-image-2"
-export JIUME_IMAGE_PROVIDER="auto"
+.venv/bin/jiume-setup --pet ~/.codex/pets/my-pet --enable
 ```
 
-Setup can persist these values to `~/.jiuwenswarm/jiume/config.env`.
+The package must contain `pet.json` and `spritesheet.webp`.
 
 ## Local Data
 

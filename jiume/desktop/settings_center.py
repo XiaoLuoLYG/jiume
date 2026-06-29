@@ -8,7 +8,6 @@ import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from jiume.config import public_config_payload, write_image_provider_config
 from jiume.desktop.state import read_conversation_state, read_service_status, read_window_state, write_window_state
 from jiume.runtime.health import RuntimeHealth, RuntimeHealthCode, check_gateway_health
 from jiume.runtime.status import runtime_config_url, runtime_diagnostic_from_health, runtime_diagnostic_from_service
@@ -25,7 +24,6 @@ SETTINGS_CENTER_MAX_AVATAR_SIZE = 220
 SETTINGS_CENTER_SECTIONS: tuple[dict[str, str], ...] = (
     {"id": "profile", "label": "分身"},
     {"id": "desktop", "label": "桌面"},
-    {"id": "image_model", "label": "图片模型"},
     {"id": "skills", "label": "技能"},
     {"id": "artifacts", "label": "产物"},
     {"id": "history", "label": "历史"},
@@ -273,15 +271,6 @@ def build_agent_settings_snapshot(
     }
 
 
-def build_image_model_settings_snapshot(*, provider: dict[str, Any]) -> dict[str, str]:
-    return {
-        "apiKeyLabel": "已配置" if bool(provider.get("hasApiKey")) else "未配置",
-        "modelLabel": str(provider.get("model") or "gpt-image-2"),
-        "baseUrlLabel": str(provider.get("baseUrl") or "默认服务"),
-        "configPath": str(provider.get("configPath") or ""),
-    }
-
-
 def build_desktop_settings_snapshot(
     *,
     window_state: dict[str, Any],
@@ -334,9 +323,6 @@ class SettingsCenterWindow:
         self.purpose_var = tk.StringVar(master=self.root, value="")
         self.tone_var = tk.StringVar(master=self.root, value="")
         self.mode_var = tk.StringVar(master=self.root, value="confirm_before_act")
-        self.api_key_var = tk.StringVar(master=self.root, value="")
-        self.base_url_var = tk.StringVar(master=self.root, value="")
-        self.model_var = tk.StringVar(master=self.root, value="gpt-image-2")
         self.skill_ids_var = tk.StringVar(master=self.root, value="")
         self.size_var = tk.StringVar(
             master=self.root,
@@ -373,7 +359,7 @@ class SettingsCenterWindow:
         ).grid(row=0, column=0, sticky="w")
         tk.Label(
             header,
-            text="编辑分身、桌面表现、技能、产物、历史和图片模型。Agent runtime 只在这里做诊断和跳转。",
+            text="编辑分身、桌面表现、技能、产物和历史。Agent runtime 只在这里做诊断和跳转。",
             bg=c["bg"],
             fg=c["muted"],
             font=_ui_font(13),
@@ -434,9 +420,6 @@ class SettingsCenterWindow:
         self.purpose_var.set(snapshot["purpose"])
         self.tone_var.set(snapshot["tone"])
         self.mode_var.set(snapshot["defaultMode"])
-        provider = public_config_payload()
-        self.base_url_var.set(str(provider.get("baseUrl") or ""))
-        self.model_var.set(str(provider.get("model") or "gpt-image-2"))
         self.skill_ids_var.set(
             build_skill_settings_snapshot(twin=twin, conversation=read_conversation_state())["allowedCsv"]
         )
@@ -473,8 +456,6 @@ class SettingsCenterWindow:
     def _render(self) -> None:
         if self.section == "desktop":
             self._render_desktop_section()
-        elif self.section == "image_model":
-            self._render_image_model_section()
         elif self.section == "skills":
             self._render_skills_section()
         elif self.section == "artifacts":
@@ -541,25 +522,6 @@ class SettingsCenterWindow:
         self._section_title(body, "桌面", f"当前大小 {snapshot['sizeLabel']}，位置 {snapshot['placement']}。")
         self._field(body, "头像大小", self.size_var)
         self._button_row(body, [("保存桌面", self._save_desktop)])
-
-    def _render_image_model_section(self) -> None:
-        body = self._clear_body()
-        snapshot = build_image_model_settings_snapshot(
-            provider=public_config_payload(),
-        )
-        self._section_title(body, "图片模型", f"JiuMe 分身素材生成模型 · API Key {snapshot['apiKeyLabel']}")
-        self._field(body, "API Key", self.api_key_var, show="*")
-        self._field(body, "Base URL", self.base_url_var)
-        self._field(body, "模型", self.model_var)
-        tk.Label(
-            body,
-            text=f"配置文件：{snapshot['configPath'] or '本机默认路径'}。这只影响照片生成分身，不会改 JiuwenSwarm Agent runtime。",
-            bg=PREMIUM_SETUP_COLORS["surface"],
-            fg=PREMIUM_SETUP_COLORS["muted"],
-            wraplength=620,
-            justify="left",
-        ).pack(anchor="w", pady=(8, 12))
-        self._button_row(body, [("保存图片模型", self._save_image_model_config)])
 
     def _render_skills_section(self) -> None:
         body = self._clear_body()
@@ -732,16 +694,6 @@ class SettingsCenterWindow:
         )
         self.status_var.set("桌面设置已保存。")
         self.callbacks.on_saved()
-
-    def _save_image_model_config(self) -> None:
-        write_image_provider_config(
-            api_key=self.api_key_var.get(),
-            base_url=self.base_url_var.get(),
-            model=self.model_var.get(),
-        )
-        self.status_var.set("图片模型设置已保存。")
-        self.callbacks.on_saved()
-        self._render_image_model_section()
 
     def _save_skills(self) -> None:
         twin = self.store.get_twin(self.active_twin_id)

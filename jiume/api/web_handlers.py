@@ -53,6 +53,9 @@ def register_jiume_handlers(channel: Any) -> None:
     def _job(job: DistillationJob) -> dict[str, Any]:
         return job.to_dict()
 
+    def _avatar_generation_removed(message: str) -> dict[str, Any]:
+        raise ValueError(message)
+
     channel.register_method(
         "twin.list",
         _wrap(lambda p: {"twins": store.list_twins(), "activeTwinId": store.get_active_twin_id()}),
@@ -68,15 +71,28 @@ def register_jiume_handlers(channel: Any) -> None:
 
     channel.register_method(
         "twin.avatar.upload_source",
-        _wrap(lambda p: {"upload": avatars.upload_source(_twin_id(p, store), p)}),
+        _wrap(lambda _p: _avatar_generation_removed("photo avatar generation was removed; import a Codex pet package")),
     )
     channel.register_method(
         "twin.avatar.generate",
-        _wrap(lambda p: {"job": avatars.generate_avatar(_twin_id(p, store), str(p.get("provider") or "auto"))}),
+        _wrap(lambda _p: _avatar_generation_removed("avatar generation was removed; import a Codex pet package")),
     )
     channel.register_method(
         "twin.avatar.job_get",
         _wrap(lambda p: {"job": avatars.get_job(_twin_id(p, store), str(p.get("job_id") or p.get("jobId") or ""))}),
+    )
+    channel.register_method("twin.avatar.list_pets", _wrap(lambda _p: {"pets": avatars.list_pets()}))
+    channel.register_method(
+        "twin.avatar.import_pet",
+        _wrap(
+            lambda p: {
+                "job": avatars.import_pet(
+                    _twin_id(p, store),
+                    pet_id=str(p.get("petId") or p.get("pet_id") or "").strip() or None,
+                    source_path=str(p.get("sourcePath") or p.get("source_path") or "").strip() or None,
+                )
+            }
+        ),
     )
     channel.register_method(
         "twin.avatar.get_manifest",

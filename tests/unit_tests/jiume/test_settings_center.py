@@ -33,10 +33,7 @@ def test_settings_center_imports_without_desktop_app_dependency() -> None:
 
 
 def test_settings_center_headless_snapshot_helpers_work_standalone() -> None:
-    assert hasattr(settings_center, "build_image_model_settings_snapshot")
-    image_model = settings_center.build_image_model_settings_snapshot(
-        provider={"hasApiKey": True, "model": "gpt-image-2", "baseUrl": ""},
-    )
+    assert not hasattr(settings_center, "build_image_model_settings_snapshot")
     diagnostics = build_agent_settings_snapshot(
         service={"services": {"agent": {"status": "running"}}},
         gateway_url="ws://127.0.0.1:19092/ws",
@@ -52,14 +49,11 @@ def test_settings_center_headless_snapshot_helpers_work_standalone() -> None:
     assert [section["id"] for section in SETTINGS_CENTER_SECTIONS] == [
         "profile",
         "desktop",
-        "image_model",
         "skills",
         "artifacts",
         "history",
         "diagnostics",
     ]
-    assert image_model["apiKeyLabel"] == "已配置"
-    assert image_model["modelLabel"] == "gpt-image-2"
     assert diagnostics["connectionLabel"] == "Agent 在线"
     assert diagnostics["primaryAction"] == "打开 JiuwenSwarm 配置"
     assert desktop["sizeLabel"] == "紧凑"

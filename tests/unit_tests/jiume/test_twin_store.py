@@ -2,22 +2,91 @@ from __future__ import annotations
 
 import sys
 import json
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image
 
 import jiume.desktop.app as desktop_app
 import jiume.launcher as jiume_launcher
-from jiume.avatar.service import AVATAR_VIEW_NAMES, ANIMATION_FRAMES_PER_STATE, DESKTOP_STATES, AvatarService, _openai_avatar_prompt
+from jiume.launcher import (
+    LAUNCH_AGENT_LABEL,
+    _build_launch_plan,
+    _claim_launcher_lock,
+    _gateway_endpoint,
+    _launch_agent_payload,
+    _launcher_args_for_login,
+    _read_launcher_pid,
+    _release_launcher_lock,
+    _should_open_desktop_avatar,
+)
+from jiume.avatar.service import ANIMATION_FRAMES_PER_STATE, DESKTOP_STATES, AvatarService
 from jiume.api.assets import resolve_asset_path
+from jiume.desktop.companion import (
+    IDLE_COMPANION_SECONDS,
+    idle_companion_moment,
+    idle_companion_moments,
+    should_run_idle_companion,
+)
+from jiume.desktop.gateway_client import (
+    GatewayEvent,
+    JiuMeGatewayChatClient,
+    answers_for_decision,
+    build_interrupt_request,
+    build_user_answer_request,
+    desktop_state_for_gateway_event,
+    gateway_event_artifacts,
+    gateway_event_text,
+    normalize_gateway_frame,
+)
+from jiume.desktop.interactions import interaction_actions, interaction_by_id
+from jiume.desktop.menus import (
+    app_menu_labels,
+    companion_menu_labels,
+    material_menu_labels,
+    play_menu_labels,
+    skill_menu_labels,
+    state_menu_labels,
+    task_menu_labels,
+)
 from jiume.desktop.overlay import DesktopOverlayHost
-from jiume.config import get_image_provider_config
+from jiume.desktop.state import (
+    get_companion_state_path,
+    get_conversation_state_path,
+    get_window_state_path,
+    read_companion_state,
+    read_conversation_state,
+    read_service_status,
+    read_window_state,
+    set_service_status,
+    write_companion_state,
+    write_conversation_state,
+    write_window_state,
+)
+from jiume.desktop.settings_center import (
+    SETTINGS_CENTER_SECTIONS,
+    build_agent_settings_snapshot,
+    build_desktop_settings_snapshot,
+)
 from jiume.setup.server import NativeSetupController, NativeSetupWindow, _public_manifest
 from jiume.setup.progress import GenerationProgress, classify_generation_error
+from jiume.personal_distillation.engine import PersonalDistillationEngine
+from jiume.runtime.context import enrich_gateway_message
+from jiume.skills.catalog import (
+    RECOMMENDED_SKILLS,
+    SKILL_FILTER_ALL,
+    catalog_payload,
+    filter_recommended_skills,
+    mounted_skill_cards,
+    skill_categories,
+    skill_risks,
+)
+from jiume.skills.local_install import install_local_skill, resolve_local_skill_source
+from jiume.twins.store import TwinStore, normalize_twin_appearance
 from jiume.desktop.actions import quick_action_by_id, quick_action_prompt, quick_actions
 from jiume.desktop.one_line_companion import DAILY_FORBIDDEN_LABELS
 from jiume.desktop.app import (
@@ -212,185 +281,42 @@ def _assert_codex_pet_atlas(path: Path) -> None:
             assert has_pixels is (column < frame_count), f"{state} column {column}"
 
 
-def _assert_rgb_close(actual: tuple[int, int, int], expected: tuple[int, int, int], tolerance: int = 4) -> None:
-    assert all(abs(a - b) <= tolerance for a, b in zip(actual, expected)), (actual, expected)
-
-
-def _png_bytes(image: Image.Image) -> bytes:
-    import io
-
-    output = io.BytesIO()
-    image.save(output, format="PNG")
-    return output.getvalue()
-
-
-def _fake_openai_base_png() -> bytes:
-    image = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((196, 258, 316, 430), radius=42, fill=(28, 31, 42, 255))
-    draw.ellipse((154, 94, 358, 298), fill=(255, 218, 196, 255))
-    draw.pieslice((148, 72, 364, 250), 180, 360, fill=(27, 24, 24, 255))
-    draw.ellipse((198, 172, 218, 192), fill=(31, 41, 55, 255))
-    draw.ellipse((294, 172, 314, 192), fill=(31, 41, 55, 255))
-    return _png_bytes(image)
-
-
-def _fake_openai_row_png(state: str) -> bytes:
-    row_index = list(CODEX_PET_FRAME_COUNTS).index(state)
-    frame_count = CODEX_PET_FRAME_COUNTS[state]
-    image = Image.new("RGBA", (1024, 1024), (0, 255, 0, 255))
-    draw = ImageDraw.Draw(image)
-    slot_width = image.width / frame_count
-    for index in range(frame_count):
-        cx = int(slot_width * (index + 0.5))
-        color = (
-            35 + (row_index * 23 + index * 19) % 180,
-            30 + (row_index * 31 + index * 17) % 170,
-            45 + (row_index * 41 + index * 29) % 160,
-            255,
-        )
-        dy = [0, -26, -10, 16, 0, -18, 12, 0][index % 8]
-        draw.rounded_rectangle((cx - 34, 450 + dy, cx + 34, 790 + dy), radius=26, fill=color)
-        draw.ellipse((cx - 46, 274 + dy, cx + 46, 386 + dy), fill=(255, 220, 200, 255))
-        draw.pieslice((cx - 50, 246 + dy, cx + 50, 358 + dy), 180, 360, fill=(25, 24, 24, 255))
-        if state == "waving":
-            draw.line((cx + 22, 510 + dy, cx + 54, 380 + dy), fill=(255, 220, 200, 255), width=16)
-        if state in {"running-right", "running-left"}:
-            direction = 1 if state == "running-right" else -1
-            draw.line((cx, 775 + dy, cx + direction * 44, 870 + dy), fill=color, width=14)
-            draw.line((cx, 775 + dy, cx - direction * 34, 858 + dy), fill=color, width=14)
-    return _png_bytes(image)
-
-
-def _fake_openai_checkerboard_row_png(state: str) -> bytes:
-    row_index = list(CODEX_PET_FRAME_COUNTS).index(state)
-    frame_count = CODEX_PET_FRAME_COUNTS[state]
-    image = Image.new("RGBA", (512, 512), (255, 255, 255, 255))
-    draw = ImageDraw.Draw(image)
-    tile = 16
-    for y in range(0, image.height, tile):
-        for x in range(0, image.width, tile):
-            color = (238, 238, 238, 255) if ((x // tile) + (y // tile)) % 2 else (255, 255, 255, 255)
-            draw.rectangle((x, y, x + tile - 1, y + tile - 1), fill=color)
-    slot_width = image.width / frame_count
-    for index in range(frame_count):
-        cx = int(slot_width * (index + 0.5))
-        dy = [0, -10, 8, -4, 12, -8, 4, 0][index % 8]
-        body = (
-            50 + (row_index * 29 + index * 17) % 120,
-            54 + (row_index * 19 + index * 13) % 120,
-            65 + (row_index * 11 + index * 23) % 120,
-            255,
-        )
-        draw.rounded_rectangle((cx - 42, 262 + dy, cx + 42, 456 + dy), radius=22, fill=(255, 255, 255, 255))
-        draw.rounded_rectangle((cx - 32, 272 + dy, cx + 32, 448 + dy), radius=18, fill=body)
-        draw.ellipse((cx - 42, 126 + dy, cx + 42, 220 + dy), fill=(255, 255, 255, 255))
-        draw.ellipse((cx - 34, 134 + dy, cx + 34, 212 + dy), fill=(255, 220, 200, 255))
-        draw.pieslice((cx - 38, 112 + dy, cx + 38, 196 + dy), 180, 360, fill=(25, 24, 24, 255))
-        draw.ellipse((cx - 18, 170 + dy, cx - 10, 178 + dy), fill=(31, 41, 55, 255))
-        draw.ellipse((cx + 10, 170 + dy, cx + 18, 178 + dy), fill=(31, 41, 55, 255))
-    return _png_bytes(image)
-
-
-def _fake_openai_green_spill_row_png(state: str) -> bytes:
-    frame_count = CODEX_PET_FRAME_COUNTS[state]
-    image = Image.new("RGBA", (768, 512), (0, 255, 0, 255))
-    draw = ImageDraw.Draw(image)
-    slot_width = image.width / frame_count
-    for index in range(frame_count):
-        cx = int(slot_width * (index + 0.5))
-        dy = [0, -8, 6, -4, 10, -6, 4, 0][index % 8]
-        draw.rectangle((cx - 40, 120 + dy, cx + 44, 362 + dy), fill=(90, 244, 54, 255))
-        draw.rounded_rectangle((cx - 48, 246 + dy, cx + 48, 430 + dy), radius=20, fill=(18, 18, 24, 255))
-        draw.rounded_rectangle((cx - 54, 240 + dy, cx + 54, 436 + dy), radius=24, outline=(218, 255, 230, 255), width=3)
-        draw.rectangle((cx - 44, 252 + dy, cx - 6, 366 + dy), fill=(54, 171, 124, 255))
-        draw.rectangle((cx + 6, 252 + dy, cx + 44, 366 + dy), fill=(38, 142, 112, 255))
-        draw.ellipse((cx - 42, 116 + dy, cx + 42, 206 + dy), fill=(255, 220, 200, 255))
-        draw.pieslice((cx - 48, 96 + dy, cx + 48, 190 + dy), 180, 360, fill=(80, 22, 32, 255))
-        draw.line((cx + 40, 112 + dy, cx + 60, 432 + dy), fill=(230, 235, 238, 255), width=6)
-    return _png_bytes(image)
-
-
-def _visible_average_rgb(path: Path) -> tuple[int, int, int]:
-    image = Image.open(path).convert("RGBA")
-    pixels = [pixel[:3] for pixel in image.getdata() if pixel[3] > 16]
-    assert pixels
-    count = len(pixels)
-    return (
-        sum(pixel[0] for pixel in pixels) // count,
-        sum(pixel[1] for pixel in pixels) // count,
-        sum(pixel[2] for pixel in pixels) // count,
+def _write_pet_package(root: Path, *, pet_id: str = "codex_bo", display_name: str = "Bo Pet") -> Path:
+    package = root / pet_id
+    package.mkdir(parents=True, exist_ok=True)
+    sheet = Image.new("RGBA", (CODEX_PET_CELL[0] * CODEX_PET_GRID[0], CODEX_PET_CELL[1] * CODEX_PET_GRID[1]), (0, 0, 0, 0))
+    for row, (state, frame_count) in enumerate(CODEX_PET_FRAME_COUNTS.items()):
+        for column in range(frame_count):
+            color = ((row * 31 + 40) % 255, (column * 27 + 80) % 255, (row * 19 + column * 13 + 120) % 255, 255)
+            cell = Image.new("RGBA", CODEX_PET_CELL, (0, 0, 0, 0))
+            x0 = 48 + (column % 2) * 4
+            y0 = 36 + (row % 2) * 3
+            for x in range(x0, x0 + 84):
+                for y in range(y0, y0 + 120):
+                    cell.putpixel((x, y), color)
+            sheet.alpha_composite(cell, (column * CODEX_PET_CELL[0], row * CODEX_PET_CELL[1]))
+    sheet.save(package / "spritesheet.webp", "WEBP", lossless=True, quality=100, method=6, exact=True)
+    (package / "pet.json").write_text(
+        json.dumps(
+            {
+                "id": pet_id,
+                "displayName": display_name,
+                "description": "A reusable Codex pet.",
+                "spritesheetPath": "spritesheet.webp",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
-from jiume.desktop.companion import (
-    IDLE_COMPANION_SECONDS,
-    idle_companion_moment,
-    idle_companion_moments,
-    should_run_idle_companion,
-)
-from jiume.desktop.settings_center import (
-    SETTINGS_CENTER_SECTIONS,
-    build_agent_settings_snapshot,
-    build_desktop_settings_snapshot,
-)
-from jiume.desktop.gateway_client import (
-    GatewayEvent,
-    JiuMeGatewayChatClient,
-    answers_for_decision,
-    build_interrupt_request,
-    build_user_answer_request,
-    desktop_state_for_gateway_event,
-    gateway_event_artifacts,
-    gateway_event_text,
-    normalize_gateway_frame,
-)
-from jiume.desktop.interactions import interaction_actions, interaction_by_id
-from jiume.desktop.menus import (
-    app_menu_labels,
-    companion_menu_labels,
-    material_menu_labels,
-    play_menu_labels,
-    skill_menu_labels,
-    state_menu_labels,
-    task_menu_labels,
-)
-from jiume.desktop.state import (
-    get_companion_state_path,
-    get_conversation_state_path,
-    get_window_state_path,
-    read_companion_state,
-    read_conversation_state,
-    read_service_status,
-    read_window_state,
-    set_service_status,
-    write_companion_state,
-    write_conversation_state,
-    write_window_state,
-)
-from jiume.launcher import (
-    LAUNCH_AGENT_LABEL,
-    _build_launch_plan,
-    _claim_launcher_lock,
-    _gateway_endpoint,
-    _launch_agent_payload,
-    _launcher_args_for_login,
-    _read_launcher_pid,
-    _release_launcher_lock,
-    _should_open_desktop_avatar,
-)
-from jiume.personal_distillation.engine import PersonalDistillationEngine
-from jiume.runtime.context import enrich_gateway_message
-from jiume.skills.catalog import (
-    RECOMMENDED_SKILLS,
-    SKILL_FILTER_ALL,
-    catalog_payload,
-    filter_recommended_skills,
-    mounted_skill_cards,
-    skill_categories,
-    skill_risks,
-)
-from jiume.skills.local_install import install_local_skill, resolve_local_skill_source
-from jiume.twins.store import TwinStore
-from jiume.twins.appearance import normalize_twin_appearance
+    return package
+
+
+def _write_pet_zip(package: Path, zip_path: Path) -> Path:
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        for file in (package / "pet.json", package / "spritesheet.webp"):
+            archive.write(file, arcname=f"{package.name}/{file.name}")
+    return zip_path
 
 
 @pytest.fixture(autouse=True)
@@ -399,7 +325,6 @@ def _isolate_jiume_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     twins = root / "twins"
     monkeypatch.setattr("jiume.paths.get_jiume_root", lambda: root)
     monkeypatch.setattr("jiume.paths.get_twins_root", lambda: twins)
-    monkeypatch.setattr("jiume.config.get_jiume_root", lambda: root)
     monkeypatch.setattr("jiume.desktop.state.get_jiume_root", lambda: root)
     monkeypatch.setattr("jiume.twins.store.get_twins_root", lambda: twins)
     monkeypatch.setattr("jiume.audit.logger.get_twin_root", lambda twin_id: twins / str(twin_id))
@@ -469,791 +394,118 @@ def test_twin_creation_can_defer_activation_until_avatar_ready(tmp_path: Path, m
     assert store.get_active_twin_id() == twin["id"]
 
 
-def test_avatar_manifest_and_asset_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_avatar_import_manifest_and_asset_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
     store = TwinStore(root=tmp_path / "twins")
     twin = store.create_twin({"displayName": "Bo", "appearance": {"id": "pink"}})
+    package = _write_pet_package(tmp_path / "packages", pet_id="codex_bo", display_name="Bo Pet")
 
-    manifest = AvatarService(store).generate_mock_avatar(twin["id"])["manifest"]
-    idle_path = tmp_path / "twins" / twin["id"] / "avatar" / "idle.png"
-    idle_image = Image.open(idle_path).convert("RGBA")
+    job = AvatarService(store).import_pet(twin["id"], source_path=package)
+    manifest = job["manifest"]
 
-    assert manifest["provider"] == "mock"
-    assert manifest["style"] == "q-version-2d-human-desktop-twin"
-    assert manifest["identity"]["form"] == "person-shaped"
-    assert manifest["identity"]["agentEntryPoint"] is True
+    assert job["provider"] == "codex-pet-import"
+    assert manifest["provider"] == "codex-pet-import"
+    assert manifest["style"] == "codex-pet"
+    assert manifest["identity"]["form"] == "codex-pet"
     assert manifest["appearance"]["label"] == "草莓粉"
-    assert "spritePack" in manifest
-    assert "codexPet" not in manifest
-    assert tuple(DESKTOP_STATES) == tuple(CODEX_PET_FRAME_COUNTS)
     assert tuple(manifest["states"]) == tuple(CODEX_PET_FRAME_COUNTS)
-    assert set(manifest["views"]) == set(AVATAR_VIEW_NAMES)
+    assert manifest["views"] == {}
     for row, (state, frame_count) in enumerate(CODEX_PET_FRAME_COUNTS.items()):
-        frames = manifest["states"][state]["frames"]
-        assert len(frames) == frame_count
-        assert manifest["states"][state]["fps"] == 6
+        assert manifest["states"][state]["row"] == row
+        assert manifest["states"][state]["frames"] == frame_count
         assert manifest["spritePack"]["animations"][state]["frames"] == [
             row * CODEX_PET_GRID[0] + column for column in range(frame_count)
         ]
-        for frame in frames:
-            assert Path(frame["file"]).exists()
-    assert idle_path.exists()
-    for view in manifest["views"].values():
-        assert Path(view["file"]).exists()
-    assert idle_image.getpixel((0, 0))[3] == 0
-    assert idle_image.getpixel((128, 122))[3] > 0
-    assert idle_image.getpixel((128, 184))[3] > 0
-    _assert_rgb_close(idle_image.getpixel((128, 176))[:3], (236, 72, 153))
-    spritesheet = tmp_path / "twins" / twin["id"] / "avatar" / "spritesheet.webp"
-    assert spritesheet.exists()
-    _assert_codex_pet_atlas(spritesheet)
-    assert (tmp_path / "twins" / twin["id"] / "avatar" / "avatar_pack.json").exists()
-    pet_json = json.loads((tmp_path / "twins" / twin["id"] / "avatar" / "pet.json").read_text(encoding="utf-8"))
-    assert pet_json == {
-        "id": twin["id"],
-        "displayName": "Bo",
-        "description": twin["purpose"],
+    avatar_dir = tmp_path / "twins" / twin["id"] / "avatar"
+    _assert_codex_pet_atlas(avatar_dir / "spritesheet.webp")
+    assert json.loads((avatar_dir / "pet.json").read_text(encoding="utf-8")) == {
+        "id": "codex_bo",
+        "displayName": "Bo Pet",
+        "description": "A reusable Codex pet.",
         "spritesheetPath": "spritesheet.webp",
     }
+    assert (avatar_dir / "avatar_manifest.json").exists()
+    assert store.get_twin(twin["id"])["avatarManifestPath"].endswith("avatar_manifest.json")
+    target, mime = resolve_asset_path(twin["id"], "spritesheet.webp")
+    assert target.exists()
+    assert mime == "image/webp"
 
 
-def test_source_image_generates_visible_local_avatar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import base64
-
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    store = TwinStore(root=tmp_path / "twins")
-    twin = store.create_twin({"displayName": "Ada", "appearance": {"id": "mint"}})
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (220, 220), (14, 96, 210)).save(source_path)
-    service = AvatarService(store)
-    service.upload_source(
-        twin["id"],
-        {
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
-
-    manifest = service.generate_mock_avatar(twin["id"])["manifest"]
-    idle_path = tmp_path / "twins" / twin["id"] / "avatar" / "idle.png"
-    idle_image = Image.open(idle_path).convert("RGBA")
-
-    assert manifest["provider"] == "source-local"
-    assert manifest["base"].endswith("base_source.png")
-    assert manifest["sourceImage"]["role"] == "avatar-reference"
-    assert Path(manifest["sourceImage"]["file"]).exists()
-    assert set(manifest["views"]) == set(AVATAR_VIEW_NAMES)
-    assert len(manifest["states"]["waving"]["frames"]) == CODEX_PET_FRAME_COUNTS["waving"]
-    assert all(Path(frame["file"]).exists() for frame in manifest["states"]["waving"]["frames"])
-    assert idle_image.getpixel((0, 0))[3] == 0
-    assert idle_image.getpixel((128, 82))[:3] == (14, 96, 210)
-    assert idle_image.getpixel((128, 208))[:3] == (14, 96, 210)
-    assert idle_image.getpixel((128, 208))[:3] != (20, 184, 166)
-    front_image = Image.open(Path(manifest["views"]["front"]["file"])).convert("RGBA")
-    left_image = Image.open(Path(manifest["views"]["left"]["file"])).convert("RGBA")
-    right_image = Image.open(Path(manifest["views"]["right"]["file"])).convert("RGBA")
-    back_image = Image.open(Path(manifest["views"]["back"]["file"])).convert("RGBA")
-    assert left_image.tobytes() != front_image.tobytes()
-    assert right_image.tobytes() != front_image.tobytes()
-    assert left_image.tobytes() != right_image.tobytes()
-    assert left_image.getpixel((128, 82))[:3] == (14, 96, 210)
-    assert right_image.getpixel((128, 82))[:3] == (14, 96, 210)
-    _assert_rgb_close(left_image.getpixel((64, 102))[:3], (40, 74, 122))
-    _assert_rgb_close(right_image.getpixel((192, 102))[:3], (40, 74, 122))
-    _assert_rgb_close(back_image.getpixel((128, 82))[:3], (40, 74, 122))
-    assert left_image.getpixel((64, 102))[:3] != (47, 36, 29)
-    assert back_image.getpixel((128, 82))[:3] != (47, 36, 29)
-    waving_image = Image.open(tmp_path / "twins" / twin["id"] / "avatar" / "waving.png").convert("RGBA")
-    assert waving_image.tobytes() != idle_image.tobytes()
-    service_source = Path("jiume/avatar/service.py").read_text(encoding="utf-8")
-    assert "def _side_view_from_base" in service_source
-    source_avatar_body = service_source.split("def _source_photo_avatar_base", 1)[1].split(
-        "def _shift_transparent", 1
-    )[0]
-    assert "initials =" not in source_avatar_body
-    assert "_center_text(" not in source_avatar_body
-    assert "105, 185, 151, 231" not in source_avatar_body
-    assert "_has_alpha_cutout(source)" in source_avatar_body
-    assert "_source_masked_photo_avatar_base(source)" in source_avatar_body
-    assert "draw.rounded_rectangle((45, 12" not in source_avatar_body
-
-
-def test_transparent_source_image_is_used_as_desktop_cutout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import base64
-
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    store = TwinStore(root=tmp_path / "twins")
-    twin = store.create_twin({"displayName": "Cutout", "appearance": {"id": "mint"}})
-    source_path = tmp_path / "cutout.png"
-    source = Image.new("RGBA", (180, 220), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(source)
-    draw.rounded_rectangle((52, 18, 128, 202), radius=36, fill=(232, 80, 72, 255))
-    draw.ellipse((42, 30, 138, 130), fill=(232, 80, 72, 255))
-    source.save(source_path)
-
-    service = AvatarService(store)
-    service.upload_source(
-        twin["id"],
-        {
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
-
-    manifest = service.generate_mock_avatar(twin["id"])["manifest"]
-    base_image = Image.open(tmp_path / "twins" / twin["id"] / "avatar" / "base_source.png").convert("RGBA")
-    idle_image = Image.open(tmp_path / "twins" / twin["id"] / "avatar" / "idle.png").convert("RGBA")
-
-    assert manifest["provider"] == "source-local"
-    assert base_image.getpixel((0, 0))[3] == 0
-    assert base_image.getpixel((128, 120))[:3] == (232, 80, 72)
-    assert base_image.getpixel((128, 208))[:3] == (232, 80, 72)
-    assert base_image.getpixel((128, 208))[:3] != (20, 184, 166)
-    assert idle_image.getbbox() is not None
-    assert len(manifest["states"]["idle"]["frames"]) == CODEX_PET_FRAME_COUNTS["idle"]
-
-
-def test_simple_photo_background_is_cut_out_for_local_avatar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import base64
-
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    store = TwinStore(root=tmp_path / "twins")
-    twin = store.create_twin({"displayName": "Photo", "appearance": {"id": "mint"}})
-    source_path = tmp_path / "photo.png"
-    source = Image.new("RGB", (260, 260), (236, 240, 246))
-    draw = ImageDraw.Draw(source)
-    draw.rounded_rectangle((96, 96, 164, 236), radius=28, fill=(232, 80, 72))
-    draw.ellipse((76, 38, 184, 146), fill=(232, 80, 72))
-    source.save(source_path)
-
-    service = AvatarService(store)
-    service.upload_source(
-        twin["id"],
-        {
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
-
-    manifest = service.generate_mock_avatar(twin["id"])["manifest"]
-    base_image = Image.open(tmp_path / "twins" / twin["id"] / "avatar" / "base_source.png").convert("RGBA")
-
-    assert manifest["provider"] == "source-local"
-    assert base_image.getpixel((0, 0))[3] == 0
-    assert base_image.getpixel((128, 118))[:3] == (232, 80, 72)
-    assert base_image.getpixel((128, 208))[:3] == (232, 80, 72)
-    assert base_image.getpixel((128, 208))[:3] != (20, 184, 166)
-
-
-def test_auto_avatar_generation_uses_uploaded_source_without_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import base64
-
-    monkeypatch.delenv("JIUME_OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_avatar_imports_pet_id_from_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    package = _write_pet_package(tmp_path / "codex" / "pets", pet_id="sleepy", display_name="Sleepy")
     monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
     store = TwinStore(root=tmp_path / "twins")
     twin = store.create_twin({"displayName": "Ada"})
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (240, 240), (231, 90, 72)).save(source_path)
     service = AvatarService(store)
-    service.upload_source(
-        twin["id"],
-        {
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
 
-    manifest = service.generate_avatar(twin["id"], "auto")["manifest"]
-    base_image = Image.open(tmp_path / "twins" / twin["id"] / "avatar" / "base_source.png").convert("RGBA")
+    assert service.list_pets()[0]["petId"] == "sleepy"
+    manifest = service.import_pet(twin["id"], pet_id="sleepy")["manifest"]
 
-    assert manifest["provider"] == "source-local"
-    assert set(manifest["states"]) >= set(DESKTOP_STATES)
-    assert Path(manifest["states"]["idle"]["file"]).exists()
-    assert base_image.getpixel((0, 0))[3] == 0
-    assert base_image.getpixel((128, 118))[:3] == (231, 90, 72)
-    assert base_image.getpixel((128, 224))[:3] == (231, 90, 72)
-    assert base_image.getpixel((75, 224))[3] < 16
+    assert manifest["spritePack"]["pet"]["id"] == "sleepy"
+    _assert_codex_pet_atlas(tmp_path / "twins" / twin["id"] / "avatar" / "spritesheet.webp")
+    assert package.exists()
 
 
-def test_native_setup_requires_model_key_before_creating_twin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import base64
-
-    monkeypatch.delenv("JIUME_OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_avatar_imports_zip_and_blocks_unsafe_archives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    package = _write_pet_package(tmp_path / "packages", pet_id="zip_pet")
+    zip_path = _write_pet_zip(package, tmp_path / "pet.zip")
     monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
     store = TwinStore(root=tmp_path / "twins")
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (32, 32), (231, 90, 72)).save(source_path)
-    controller = NativeSetupController(store=store, avatars=AvatarService(store))
+    twin = store.create_twin({"displayName": "Zip"})
 
-    with pytest.raises(ValueError, match="image model"):
-        controller.create_twin_from_photo(
-            display_name="Ada",
-            source_image={
-                "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-                "mimeType": "image/png",
-                "consent": True,
-            },
-        )
+    manifest = AvatarService(store).import_pet(twin["id"], source_path=zip_path)["manifest"]
 
-    assert store.list_twins() == []
-    assert store.get_active_twin_id() is None
+    assert manifest["spritePack"]["pet"]["id"] == "zip_pet"
+    bad_zip = tmp_path / "bad.zip"
+    with zipfile.ZipFile(bad_zip, "w") as archive:
+        archive.writestr("../pet.json", "{}")
+    with pytest.raises(ValueError, match="unsafe"):
+        AvatarService(store).import_pet(twin["id"], source_path=bad_zip)
 
 
-def test_native_setup_generates_ready_twin_then_requires_enable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import base64
-
-    monkeypatch.setenv("JIUME_OPENAI_API_KEY", "test-key")
+def test_controller_imports_ready_twin_then_requires_enable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    package = _write_pet_package(tmp_path / "packages", pet_id="ready_pet")
     monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
     store = TwinStore(root=tmp_path / "twins")
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (32, 32), (84, 112, 230)).save(source_path)
-
-    def fake_generate_model_avatar(self: AvatarService, twin_id: str) -> dict[str, Any]:
-        avatar_dir = tmp_path / "twins" / twin_id / "avatar"
-        avatar_dir.mkdir(parents=True, exist_ok=True)
-        image_path = avatar_dir / "idle.png"
-        Image.new("RGBA", (32, 32), (84, 112, 230, 255)).save(image_path)
-        manifest = {
-            "provider": "openai",
-            "states": {"idle": {"file": str(image_path), "frames": [{"file": str(image_path)}]}},
-            "views": {},
-            "spritePack": {"spritesheet": str(avatar_dir / "spritesheet.webp")},
-            "generated_at": "test",
-        }
-        return {"id": "job_test", "twin_id": twin_id, "status": "completed", "provider": "openai", "manifest": manifest}
-
-    monkeypatch.setattr(AvatarService, "generate_model_avatar", fake_generate_model_avatar)
-    controller = NativeSetupController(store=store, avatars=AvatarService(store))
-
-    created = controller.create_twin_from_photo(
-        display_name="Ada",
-        source_image={
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
-
-    assert created["twin"]["status"] == "ready"
-    assert created["job"]["provider"] == "openai"
-    assert store.get_active_twin_id() is None
-    assert store.get_twin(created["twin"]["id"])["status"] == "ready"
-
-    enabled = controller.enable_twin(created["twin"]["id"])
-
-    assert enabled["status"] == "active"
-    assert store.get_active_twin_id() == created["twin"]["id"]
-
-
-def test_native_setup_generation_does_not_write_desktop_state_before_enable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import base64
-
-    monkeypatch.setenv("JIUME_OPENAI_API_KEY", "test-key")
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    store = TwinStore(root=tmp_path / "twins")
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (32, 32), (84, 112, 230)).save(source_path)
     desktop_events: list[tuple[str, str, str, str]] = []
 
     def fake_set_desktop_state(state: str, *, twin_id: str = "", message: str = "", source: str = "") -> None:
         desktop_events.append((state, twin_id, message, source))
 
-    def fake_generate_model_avatar(self: AvatarService, twin_id: str) -> dict[str, Any]:
-        avatar_dir = tmp_path / "twins" / twin_id / "avatar"
-        avatar_dir.mkdir(parents=True, exist_ok=True)
-        image_path = avatar_dir / "idle.png"
-        Image.new("RGBA", (32, 32), (84, 112, 230, 255)).save(image_path)
-        manifest = {
-            "provider": "openai",
-            "states": {"idle": {"file": str(image_path), "frames": [{"file": str(image_path)}]}},
-            "views": {},
-            "spritePack": {"spritesheet": str(avatar_dir / "spritesheet.webp")},
-            "generated_at": "test",
-        }
-        return {"id": "job_test", "twin_id": twin_id, "status": "completed", "provider": "openai", "manifest": manifest}
-
-    monkeypatch.setattr(AvatarService, "generate_model_avatar", fake_generate_model_avatar)
     monkeypatch.setattr("jiume.setup.server.set_desktop_state", fake_set_desktop_state)
     controller = NativeSetupController(store=store, avatars=AvatarService(store))
 
-    created = controller.create_twin_from_photo(
-        display_name="Ada",
-        source_image={
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
+    created = controller.create_twin_from_pet(display_name="Ada", source_path=package)
 
     assert created["twin"]["status"] == "ready"
+    assert store.get_active_twin_id() is None
     assert desktop_events == []
-
     controller.enable_twin(created["twin"]["id"])
-
     assert desktop_events == [("success", created["twin"]["id"], "我已经换成你的桌面分身", "setup")]
-    setup_source = Path("jiume/setup/server.py").read_text(encoding="utf-8")
-    assert 'source="setup"' in setup_source
 
 
-def test_native_setup_accepts_empty_optional_provider_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JIUME_OPENAI_API_KEY", "test-key")
-    monkeypatch.delenv("JIUME_OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("API_BASE", raising=False)
-    monkeypatch.delenv("JIUME_IMAGE_MODEL", raising=False)
-    monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+def test_controller_rejects_bad_pet_without_leaving_twin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    package = _write_pet_package(tmp_path / "packages", pet_id="bad_pet")
+    Image.new("RGBA", (10, 10), (255, 0, 0, 255)).save(package / "spritesheet.webp", "WEBP")
     monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
     store = TwinStore(root=tmp_path / "twins")
     controller = NativeSetupController(store=store, avatars=AvatarService(store))
 
-    controller.save_provider_config(api_key="test-key", base_url="", model="")
-    config = get_image_provider_config()
-
-    assert config.base_url == ""
-    assert config.model == "gpt-image-2"
-    assert store.get_active_twin_id() is None
-
-
-def test_generation_progress_and_failure_classifier_are_specific() -> None:
-    progress = GenerationProgress(stage="states", title="生成状态", detail="正在生成 idle/speaking 动作", percent=0.62)
-
-    missing_key = classify_generation_error(ValueError("image model API key is required before creating a twin."))
-    timeout = classify_generation_error(TimeoutError("request timed out"))
-    connection = classify_generation_error(ConnectionError("connection refused"))
-    unknown = classify_generation_error(RuntimeError("unexpected provider payload"))
-
-    assert progress.as_dict() == {
-        "stage": "states",
-        "title": "生成状态",
-        "detail": "正在生成 idle/speaking 动作",
-        "percent": 0.62,
-    }
-    assert missing_key.code == "config_missing"
-    assert "图片模型 API Key" in missing_key.title
-    assert timeout.code == "timeout"
-    assert "超时" in timeout.title
-    assert connection.code == "network"
-    assert "网络" in connection.title
-    assert unknown.code == "unknown"
-    assert "unexpected provider payload" in unknown.detail
-
-
-def test_setup_generation_worker_uses_ui_queue_instead_of_thread_tk_after() -> None:
-    setup_source = Path("jiume/setup/server.py").read_text(encoding="utf-8")
-    init_source = setup_source.split("def __init__", 1)[1].split("def _build_shell", 1)[0]
-    worker_source = setup_source.split("def _generate_worker", 1)[1].split(
-        "def _handle_generation_progress",
-        1,
-    )[0]
-
-    assert "from queue import Empty, SimpleQueue" in setup_source
-    assert "self._ui_events: SimpleQueue[Callable[[], None]]" in init_source
-    assert "def _post_to_ui" in setup_source
-    assert "def _drain_ui_events" in setup_source
-    assert "progress=lambda stage: self._post_to_ui(" in worker_source
-    assert "lambda s=stage, a=attempt_id: self._handle_generation_progress(a, s)" in worker_source
-    assert "self._post_to_ui(lambda e=exc, a=attempt_id:" in worker_source
-    assert "self._post_to_ui(lambda r=result, a=attempt_id:" in worker_source
-    assert "self.root.after" not in worker_source
-
-
-def test_native_setup_reports_creation_progress_stages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import base64
-
-    monkeypatch.setenv("JIUME_OPENAI_API_KEY", "test-key")
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    store = TwinStore(root=tmp_path / "twins")
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (32, 32), (84, 112, 230)).save(source_path)
-
-    def fake_generate_model_avatar(self: AvatarService, twin_id: str) -> dict[str, Any]:
-        avatar_dir = tmp_path / "twins" / twin_id / "avatar"
-        avatar_dir.mkdir(parents=True, exist_ok=True)
-        image_path = avatar_dir / "idle.png"
-        Image.new("RGBA", (32, 32), (84, 112, 230, 255)).save(image_path)
-        manifest = {
-            "provider": "openai",
-            "states": {"idle": {"file": str(image_path), "frames": [{"file": str(image_path)}]}},
-            "views": {},
-            "spritePack": {"spritesheet": str(avatar_dir / "spritesheet.webp")},
-            "generated_at": "test",
-        }
-        return {"id": "job_test", "twin_id": twin_id, "status": "completed", "provider": "openai", "manifest": manifest}
-
-    monkeypatch.setattr(AvatarService, "generate_model_avatar", fake_generate_model_avatar)
-    controller = NativeSetupController(store=store, avatars=AvatarService(store))
-    stages: list[str] = []
-
-    created = controller.create_twin_from_photo(
-        display_name="Ada",
-        source_image={
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-        progress=stages.append,
-    )
-
-    assert created["twin"]["status"] == "ready"
-    assert stages == ["photo", "model", "states", "enable"]
-
-
-def test_native_setup_cancel_removes_generated_twin_before_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import base64
-
-    monkeypatch.setenv("JIUME_OPENAI_API_KEY", "test-key")
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    store = TwinStore(root=tmp_path / "twins")
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (32, 32), (84, 112, 230)).save(source_path)
-
-    def fake_generate_model_avatar(self: AvatarService, twin_id: str) -> dict[str, Any]:
-        avatar_dir = tmp_path / "twins" / twin_id / "avatar"
-        avatar_dir.mkdir(parents=True, exist_ok=True)
-        image_path = avatar_dir / "idle.png"
-        Image.new("RGBA", (32, 32), (84, 112, 230, 255)).save(image_path)
-        manifest = {
-            "provider": "openai",
-            "states": {"idle": {"file": str(image_path), "frames": [{"file": str(image_path)}]}},
-            "views": {},
-            "spritePack": {"spritesheet": str(avatar_dir / "spritesheet.webp")},
-            "generated_at": "test",
-        }
-        return {"id": "job_test", "twin_id": twin_id, "status": "completed", "provider": "openai", "manifest": manifest}
-
-    monkeypatch.setattr(AvatarService, "generate_model_avatar", fake_generate_model_avatar)
-    controller = NativeSetupController(store=store, avatars=AvatarService(store))
-
-    with pytest.raises(RuntimeError, match="generation cancelled"):
-        controller.create_twin_from_photo(
-            display_name="Ada",
-            source_image={
-                "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-                "mimeType": "image/png",
-                "consent": True,
-            },
-            is_cancelled=lambda: bool(store.list_twins()),
-        )
+    with pytest.raises(ValueError, match="spritesheet"):
+        controller.create_twin_from_pet(display_name="Bad", source_path=package)
 
     assert store.list_twins() == []
-    assert store.get_active_twin_id() is None
 
 
-def test_native_setup_late_success_callback_deletes_cancelled_ready_twin(tmp_path: Path) -> None:
-    store = TwinStore(root=tmp_path / "twins")
-    twin = store.create_twin({"displayName": "Ada", "activate": False})
-    ready = store.update_twin(twin["id"], {"status": "ready"})
-    window = object.__new__(NativeSetupWindow)
-    window.controller = NativeSetupController(store=store, avatars=AvatarService(store))
-    window.generation_attempt_id = "attempt-1"
-    window.generation_cancelled = True
-    window.created_twin_id = ""
+def test_generation_progress_and_failure_classifier_are_pet_specific() -> None:
+    progress = GenerationProgress(stage="pet", title="正在导入 Codex pet", detail="正在校验", percent=0.6)
 
-    NativeSetupWindow._generation_succeeded(window, "attempt-1", {"twin": ready})
-
-    assert store.list_twins() == []
-    assert window.created_twin_id == ""
-
-
-def test_source_preview_generates_avatar_pack_without_creating_twin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import base64
-
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    store = TwinStore(root=tmp_path / "twins")
-    source_path = tmp_path / "preview.png"
-    source = Image.new("RGB", (260, 260), (236, 240, 246))
-    draw = ImageDraw.Draw(source)
-    draw.rounded_rectangle((92, 96, 168, 236), radius=30, fill=(84, 112, 230))
-    draw.ellipse((74, 36, 186, 148), fill=(84, 112, 230))
-    source.save(source_path)
-
-    job = AvatarService(store).generate_source_preview(
-        {
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-        "Ada Preview",
-    )
-    manifest = job["manifest"]
-    preview_id = job["twin_id"]
-    public_manifest = _public_manifest(manifest, preview_id)
-
-    assert preview_id.startswith("preview_")
-    assert job["provider"] == "source-local-preview"
-    assert store.list_twins() == []
-    assert store.get_active_twin_id() is None
-    assert manifest["identity"]["form"] == "person-shaped"
-    assert set(manifest["states"]) >= set(DESKTOP_STATES)
-    assert set(manifest["views"]) == set(AVATAR_VIEW_NAMES)
-    assert len(manifest["states"]["idle"]["frames"]) == CODEX_PET_FRAME_COUNTS["idle"]
-    assert Path(manifest["states"]["idle"]["file"]).exists()
-    assert Path(manifest["spritePack"]["spritesheet"]).exists()
-    assert public_manifest["provider"] == "source-local-preview"
-    assert public_manifest["states"]["idle"]["src"].startswith(f"/assets/{preview_id}/idle.png")
-    assert "file" not in public_manifest["states"]["idle"]
-    assert "file" not in public_manifest["states"]["idle"]["frames"][0]
-    target, mime = resolve_asset_path(preview_id, Path(manifest["states"]["idle"]["file"]).name)
-    assert target.exists()
-    assert mime == "image/png"
-    assert Path(manifest["states"]["waving"]["file"]).exists()
-    assert len(manifest["states"]["idle"]["frames"]) == CODEX_PET_FRAME_COUNTS["idle"]
-    assert set(manifest["views"]) == set(AVATAR_VIEW_NAMES)
-
-
-def test_openai_avatar_generates_hatch_pet_style_sprite_rows(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import base64
-
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    monkeypatch.setattr("jiume.avatar.service.get_twin_root", lambda twin_id: tmp_path / "twins" / str(twin_id))
-    monkeypatch.setattr(
-        "jiume.avatar.service.get_image_provider_config",
-        lambda: SimpleNamespace(api_key="test-key", base_url="", model="gpt-image-2", config_path=tmp_path / "config.env"),
-    )
-    store = TwinStore(root=tmp_path / "twins")
-    service = AvatarService(store)
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (64, 64), (240, 225, 210)).save(source_path)
-    twin = store.create_twin({"displayName": "Rows"})
-    service.upload_source(
-        twin["id"],
-        {
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
-    calls: list[dict[str, Any]] = []
-
-    class FakeImages:
-        def edit(self, **kwargs: Any) -> SimpleNamespace:
-            calls.append({**kwargs, "image_name": Path(kwargs["image"].name).name})
-            prompt = str(kwargs.get("prompt") or "")
-            for state in CODEX_PET_FRAME_COUNTS:
-                if f"Animation row state: {state}." in prompt:
-                    return SimpleNamespace(data=[SimpleNamespace(b64_json=base64.b64encode(_fake_openai_row_png(state)).decode("ascii"))])
-            return SimpleNamespace(data=[SimpleNamespace(b64_json=base64.b64encode(_fake_openai_base_png()).decode("ascii"))])
-
-    class FakeOpenAI:
-        def __init__(self, **_kwargs: Any) -> None:
-            self.images = FakeImages()
-
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
-
-    job = service.generate_openai_avatar(twin["id"])
-    manifest = job["manifest"]
-    avatar_dir = tmp_path / "twins" / twin["id"] / "avatar"
-
-    assert job["provider"] == "openai"
-    assert len(calls) == 1 + len(CODEX_PET_FRAME_COUNTS)
-    assert calls[0]["image_name"].startswith("source_")
-    assert all(call["image_name"] == "base_openai.png" for call in calls[1:])
-    assert all("hatch-pet-style Codex animation row strip" in str(call["prompt"]) for call in calls[1:])
-    assert all("#FF00FF" in str(call["prompt"]) for call in calls[1:])
-    assert all("checkerboard" in str(call["prompt"]).lower() for call in calls[1:])
-    assert all(call.get("background") is None for call in calls[1:])
-    for state, frame_count in CODEX_PET_FRAME_COUNTS.items():
-        assert (avatar_dir / f"row_{state}.png").exists()
-        assert len(manifest["states"][state]["frames"]) == frame_count
-        assert all(Path(frame["file"]).exists() for frame in manifest["states"][state]["frames"])
-    assert _visible_average_rgb(avatar_dir / "idle.png") != _visible_average_rgb(avatar_dir / "idle_1.png")
-    _assert_codex_pet_atlas(avatar_dir / "spritesheet.webp")
-
-
-def test_openai_avatar_removes_generated_checkerboard_background(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import base64
-
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    monkeypatch.setattr("jiume.avatar.service.get_twin_root", lambda twin_id: tmp_path / "twins" / str(twin_id))
-    monkeypatch.setattr(
-        "jiume.avatar.service.get_image_provider_config",
-        lambda: SimpleNamespace(api_key="test-key", base_url="", model="gpt-image-2", config_path=tmp_path / "config.env"),
-    )
-    store = TwinStore(root=tmp_path / "twins")
-    service = AvatarService(store)
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (64, 64), (240, 225, 210)).save(source_path)
-    twin = store.create_twin({"displayName": "Checker"})
-    service.upload_source(
-        twin["id"],
-        {
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
-
-    class FakeImages:
-        def edit(self, **kwargs: Any) -> SimpleNamespace:
-            prompt = str(kwargs.get("prompt") or "")
-            for state in CODEX_PET_FRAME_COUNTS:
-                if f"Animation row state: {state}." in prompt:
-                    return SimpleNamespace(
-                        data=[SimpleNamespace(b64_json=base64.b64encode(_fake_openai_checkerboard_row_png(state)).decode("ascii"))]
-                    )
-            return SimpleNamespace(data=[SimpleNamespace(b64_json=base64.b64encode(_fake_openai_base_png()).decode("ascii"))])
-
-    class FakeOpenAI:
-        def __init__(self, **_kwargs: Any) -> None:
-            self.images = FakeImages()
-
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
-
-    job = service.generate_openai_avatar(twin["id"])
-    avatar_dir = tmp_path / "twins" / twin["id"] / "avatar"
-    row_idle = Image.open(avatar_dir / "row_idle.png").convert("RGBA")
-    idle = Image.open(avatar_dir / "idle.png").convert("RGBA")
-    idle_bbox = idle.getchannel("A").getbbox()
-
-    assert job["provider"] == "openai"
-    assert row_idle.getpixel((0, 0))[3] == 0
-    assert row_idle.getchannel("A").getbbox() != (0, 0, row_idle.width, row_idle.height)
-    assert idle_bbox is not None
-    assert idle_bbox[2] - idle_bbox[0] > 45
-    assert all(idle.getpixel(point)[3] == 0 for point in [(0, 0), (191, 0), (0, 207), (191, 207)])
-    _assert_codex_pet_atlas(avatar_dir / "spritesheet.webp")
-
-
-def test_openai_avatar_removes_green_chroma_spill_without_erasing_green_outfit(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import base64
-
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    monkeypatch.setattr("jiume.avatar.service.get_twin_root", lambda twin_id: tmp_path / "twins" / str(twin_id))
-    monkeypatch.setattr(
-        "jiume.avatar.service.get_image_provider_config",
-        lambda: SimpleNamespace(api_key="test-key", base_url="", model="gpt-image-2", config_path=tmp_path / "config.env"),
-    )
-    store = TwinStore(root=tmp_path / "twins")
-    service = AvatarService(store)
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (64, 64), (240, 225, 210)).save(source_path)
-    twin = store.create_twin({"displayName": "Spill"})
-    service.upload_source(
-        twin["id"],
-        {
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
-
-    class FakeImages:
-        def edit(self, **kwargs: Any) -> SimpleNamespace:
-            prompt = str(kwargs.get("prompt") or "")
-            for state in CODEX_PET_FRAME_COUNTS:
-                if f"Animation row state: {state}." in prompt:
-                    return SimpleNamespace(
-                        data=[SimpleNamespace(b64_json=base64.b64encode(_fake_openai_green_spill_row_png(state)).decode("ascii"))]
-                    )
-            return SimpleNamespace(data=[SimpleNamespace(b64_json=base64.b64encode(_fake_openai_base_png()).decode("ascii"))])
-
-    class FakeOpenAI:
-        def __init__(self, **_kwargs: Any) -> None:
-            self.images = FakeImages()
-
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
-
-    service.generate_openai_avatar(twin["id"])
-    avatar_dir = tmp_path / "twins" / twin["id"] / "avatar"
-    idle = Image.open(avatar_dir / "idle.png").convert("RGBA")
-    row_idle = Image.open(avatar_dir / "row_idle.png").convert("RGBA")
-    bright_spill = [
-        pixel
-        for pixel in idle.getdata()
-        if pixel[3] > 16 and pixel[1] >= 185 and pixel[1] - max(pixel[0], pixel[2]) >= 64 and pixel[2] <= pixel[0] + 52
-    ]
-    tinted_outline = [
-        pixel
-        for pixel in idle.getdata()
-        if pixel[3] > 16 and min(pixel[:3]) >= 180 and pixel[1] - max(pixel[0], pixel[2]) >= 18
-    ]
-    outfit_pixels = [
-        pixel
-        for pixel in idle.getdata()
-        if pixel[3] > 16 and 32 <= pixel[0] <= 72 and 125 <= pixel[1] <= 190 and 90 <= pixel[2] <= 150
-    ]
-
-    assert row_idle.getpixel((0, 0))[3] == 0
-    assert bright_spill == []
-    assert tinted_outline == []
-    assert len(outfit_pixels) > 40
-    _assert_codex_pet_atlas(avatar_dir / "spritesheet.webp")
-
-
-def test_openai_avatar_retries_without_transparent_background_when_model_rejects_it(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import base64
-
-    monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    monkeypatch.setattr("jiume.avatar.service.get_twin_root", lambda twin_id: tmp_path / "twins" / str(twin_id))
-    monkeypatch.setattr(
-        "jiume.avatar.service.get_image_provider_config",
-        lambda: SimpleNamespace(api_key="test-key", base_url="", model="gpt-image-2", config_path=tmp_path / "config.env"),
-    )
-    store = TwinStore(root=tmp_path / "twins")
-    service = AvatarService(store)
-    source_path = tmp_path / "source.png"
-    Image.new("RGB", (64, 64), (240, 225, 210)).save(source_path)
-    twin = store.create_twin({"displayName": "Retry"})
-    service.upload_source(
-        twin["id"],
-        {
-            "contentBase64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
-            "mimeType": "image/png",
-            "consent": True,
-        },
-    )
-    calls: list[dict[str, Any]] = []
-    client_kwargs: list[dict[str, Any]] = []
-    did_reject_transparency = False
-
-    class FakeImages:
-        def edit(self, **kwargs: Any) -> SimpleNamespace:
-            nonlocal did_reject_transparency
-            calls.append(kwargs)
-            if kwargs.get("background") == "transparent" and not did_reject_transparency:
-                did_reject_transparency = True
-                raise RuntimeError("Transparent background is not supported for this model.")
-            prompt = str(kwargs.get("prompt") or "")
-            for state in CODEX_PET_FRAME_COUNTS:
-                if f"Animation row state: {state}." in prompt:
-                    return SimpleNamespace(data=[SimpleNamespace(b64_json=base64.b64encode(_fake_openai_row_png(state)).decode("ascii"))])
-            return SimpleNamespace(data=[SimpleNamespace(b64_json=base64.b64encode(_fake_openai_base_png()).decode("ascii"))])
-
-    class FakeOpenAI:
-        def __init__(self, **kwargs: Any) -> None:
-            client_kwargs.append(kwargs)
-            self.images = FakeImages()
-
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
-
-    job = service.generate_openai_avatar(twin["id"])
-
-    assert [call.get("background") for call in calls[:2]] == ["transparent", None]
-    assert len(calls) == 2 + len(CODEX_PET_FRAME_COUNTS)
-    assert client_kwargs == [{"api_key": "test-key", "timeout": 180.0}]
-    assert job["provider"] == "openai"
-    assert (tmp_path / "twins" / twin["id"] / "avatar" / "idle.png").exists()
+    assert progress.as_dict()["stage"] == "pet"
+    invalid = classify_generation_error(ValueError("spritesheet must be 1536x1872"))
+    unknown = classify_generation_error(RuntimeError("boom"))
+    assert invalid.title == "Codex pet 包无效"
+    assert unknown.title == "生成失败"
 
 
 def test_public_manifest_cache_busts_avatar_urls() -> None:
@@ -1366,7 +618,7 @@ def test_desktop_state_file_uses_manifest_animation_frames() -> None:
     assert "我已经换成你的桌面分身。单击就直接说话。" in app_source
 
 
-def test_setup_page_copy_prioritizes_person_twin_creation() -> None:
+def test_setup_page_copy_prioritizes_codex_pet_import() -> None:
     setup_source = Path("jiume/setup/server.py").read_text(encoding="utf-8")
     app_source = Path("jiume/desktop/app.py").read_text(encoding="utf-8")
     menu_source = Path("jiume/desktop/menus.py").read_text(encoding="utf-8")
@@ -1377,321 +629,63 @@ def test_setup_page_copy_prioritizes_person_twin_creation() -> None:
     assert "ThreadingHTTPServer" not in setup_source
     assert "BaseHTTPRequestHandler" not in setup_source
     assert "SETUP_HTML" not in setup_source
-    assert "do_GET" not in setup_source
-    assert "do_POST" not in setup_source
-    assert "webbrowser.open(runtime_config_url())" in setup_source
+    assert "create_twin_from_pet" in setup_source
+    assert "create_twin_from_photo" not in setup_source
+    assert "导入 hatch-pet" in setup_source
     assert "配置入口" not in menu_source
     assert "webbrowser.open(self.setup_url)" not in app_source
     assert "_setup_placeholder_manifest" not in app_source
     assert "open_panel(self)" in app_source
     assert "Legacy boxed control panel is retired" in app_source
-    return
-
-    html = Path("jiume/resources/setup/index.html").read_text(encoding="utf-8")
-
-    assert _is_setup_page_path("/")
-    assert _is_setup_page_path("/setup")
-    assert _is_setup_page_path("/setup/")
-    assert not _is_setup_page_path("/api/setup")
-    assert "上传照片，让 JiuMe 像你。" in html
-    assert html.index("上传照片，让 JiuMe 像你。") < html.index("让分身留在桌面。")
-    assert "1 / 3" not in html
-    assert '<span class="step-count" id="stepCount">1 / 2</span>' in html
-    assert 'data-panel="2"' not in html
-    assert 'data-step-jump="2"' not in html
-    assert "桌面人形分身" in html
-    assert "待上传照片" in html
-    assert "ambient-status" in html
-    assert '<header class="topbar">' not in html
-    assert 'class="progress-row" aria-hidden="true"' in html
-    assert "[hidden] {\n        display: none !important;\n      }" in html
-    assert "dialogue-step" in html
-    assert "Dialogue-stage refinement" in html
-    assert "Avatar-first pass" in html
-    assert ".side {\n        order: -1;" in html
-    assert "data-config-mode=\"local\"" in html
-    assert "data-config-mode=\"model\"" in html
-    assert '<div class="model-form" id="modelForm">' in html
-    assert '<div class="model-form is-visible" id="modelForm">' not in html
-    assert "modelFormExpanded = false" in html
-    assert "Two-step-first-run pass" in html
-    assert "确认后，我会从这里常驻到桌面。高级图片模型以后再接。" in html
-    assert "Dialogue-action-bubbles pass" in html
-    assert "Personal-stage-final pass" in html
-    assert "const previewReadyLabel = '继续进入';" in html
-    assert '<span id="nextLabel">生成预览</span>' in html
-    assert '<span id="nextLabel">下一步</span>' not in html
-    assert ".ghost-button:disabled {\n        visibility: hidden;" in html
-    assert ".actions {\n        flex-direction: row-reverse;" in html
-    assert 'id="consent" type="checkbox" checked' in html
-    assert "body::before {\n        display: none;" in html
-    assert "grid-template-columns: minmax(420px, 1.2fr) minmax(320px, .8fr)" in html
-    assert ".main,\n      .panel,\n      .side,\n      .avatar-card,\n      .avatar-stage,\n      .desktop-frame" in html
-    assert "高级图片模型" in html
-    assert 'id="advancedConfigToggle"' in html
-    assert 'id="advancedConfigMode" aria-label="高级头像生成方式" hidden' in html
-    assert 'id="configHint" hidden' in html
-    assert "let advancedConfigVisible = false" in html
-    assert "advancedConfigMode.hidden = !advancedConfigVisible" in html
-    assert "modelForm.classList.toggle('is-visible', advancedConfigVisible && modelFormExpanded)" in html
-    assert "'生成预览'" in html
-    assert "'保存并继续'" not in html
-    assert "renderConfigMode()" in html
-    assert "button.dataset.configMode === 'model'" in html
-    assert "avatar-placeholder" in html
-    assert "source-avatar" in html
-    assert "source-avatar-cutout" in html
-    assert "source-avatar-photo" in html
-    assert "source-cutout-image" in html
-    assert "source-photo-bust" in html
-    assert "source-photo-card" not in html
-    assert "Source-avatar-as-person pass" in html
-    assert "Focused-first-run-clarity pass" in html
-    assert "bust.className = 'source-photo-bust';" in html
-    assert "上传照片人形半身预览" in html
-    assert "sourceHasTransparentPixels" in html
-    assert "window.jiumeSourceHasTransparentPixels = sourceHasTransparentPixels" in html
-    assert "mode === 'source-cutout'" in html
-    assert "preview.dataset.sourcePreview" in html
-    assert "preview.dataset.previewMode" in html
-    assert "has-photo-preview" in html
-    assert "has-generated-avatar" in html
-    assert "is-generating-preview" in html
-    assert "Conversation-polish pass" in html
-    assert "Companion-onboarding pass" in html
-    assert 'id="photoHeadline"' in html
-    assert "photoHeadlineReady = '照片已放进 JiuMe 预览。'" in html
-    assert "photoHeadlineGenerated = '你的 JiuMe 分身已生成。'" in html
-    assert "? photoHeadlineGenerated" in html
-    assert ".source-avatar-photo .source-face-ring" in html
-    assert "body[data-upload-preview=\"empty\"] .orbit-nav" in html
-    assert "body[data-upload-preview=\"empty\"] .actions {\n        display: none !important;" in html
-    assert 'body[data-upload-preview="empty"] .consent {\n        display: none !important;' in html
-    assert "body.has-photo-preview .orbit-nav button:nth-child(2)" in html
-    assert ".upload-card {\n        grid-template-columns: 50px minmax(0, 1fr) max-content;" in html
-    assert "grid-column: 3;" in html
-    assert ".dialogue-step h1::after" in html
-    assert ".orbit-nav {\n        pointer-events: none;" in html
-    assert ".orbit-nav button {\n        pointer-events: auto;" in html
-    assert "body.is-generating .desktop-frame" in html
-    assert "ambientStatusText.textContent = hasSourcePreview" in html
-    assert "根据上传照片生成的 JiuMe 预览" in html
-    assert "根据透明照片生成的 JiuMe 抠图预览" in html
-    assert "我看到了透明主体，会直接用它生成桌面分身。" in html
-    assert "我看到了这张照片，会先尝试抠出你再生成多状态分身。" in html
-    assert "generateAvatarPreviewFromPhoto" in html
-    assert "fetch(apiUrl('/api/avatar-preview')" in html
-    assert "previewManifest = result.manifest" in html
-    assert "renderStateStrip(previewManifest)" in html
-    assert "renderViewStrip(previewManifest)" in html
-    assert "Instant-upload-preview pass" in html
-    assert "setPreviewImage(selectedPhotoPreviewUrl, 'source');" in html
-    assert "照片已经先变成预览。勾选授权后会立刻生成 idle、speaking、thinking 等状态。" in html
-    assert "consent.checked ? '' : 'error'" not in html
-    assert "分身已生成。点角色周围的小气泡" in html
-    assert "角色动作已就绪" in html
-    assert "动作和视角已经围在我身边" in html
-    assert "nextLabel.textContent = '生成中';" in html
-    assert "nextButton.classList.toggle('is-ready'" in html
-    assert "nextLabel.textContent = previewReadyLabel;" in html
-    assert "#nextButton.is-ready" in html
-    assert "if (!previewManifest && !setupCompleted)" in html
-    assert "consent.addEventListener('change'" in html
-    assert "state-strip" in html
-    assert "state-chip" in html
-    assert "view-strip" in html
-    assert "view-chip" in html
-    assert "Preview-layer-tray pass" in html
-    assert "Immediate-avatar-layer-feedback pass" in html
-    assert "Setup-upload-bubble pass" in html
-    assert "Creation-focus pass" in html
-    assert "Generated-avatar-conversation-focus pass" in html
-    assert "body.has-generated-avatar .main" in html
-    assert "clip-path: inset(50%)" in html
-    assert "body.has-generated-avatar .status" in html
-    assert "Character-control-ring pass" in html
-    assert "body.has-generated-avatar .avatar-layers:not(.is-pending)" in html
-    assert "position: absolute;\n        left: 50%;" in html
-    assert "body.has-generated-avatar .avatar-layers:not(.is-pending) .state-chip:nth-child(8)" in html
-    assert "body.has-generated-avatar .avatar-layers:not(.is-pending) .view-chip:nth-child(4)" in html
-    assert "width: 52px;" in html
-    assert "opacity: 0;\n        pointer-events: none;" in html
-    assert ".state-chip:hover span" in html
-    assert ".view-chip:focus-visible span" in html
-    assert "border-radius: 999px;" in html
-    assert "body.has-generated-avatar .avatar-layers:not(.is-pending) .state-chip,\n        body.has-generated-avatar .avatar-layers:not(.is-pending) .view-chip {\n          position: relative;" in html
-    assert ".upload-action {\n        display: none;" in html
-    assert 'id="uploadTitle">选择你的照片</strong>' in html
-    assert "const uploadTitle = document.getElementById('uploadTitle');" in html
-    assert "uploadTitle.textContent = file ? '照片已接住' : '选择你的照片';" in html
-    assert "uploadTitle.textContent = '换一张照片';" in html
-    assert "function syncConsentState()" in html
-    assert "document.body.dataset.consent = consent.checked ? 'granted' : 'needed';" in html
-    assert 'body.has-photo-preview[data-consent="granted"] .consent' in html
-    assert ".upload-card.has-file .upload-copy span {\n        display: block;" in html
-    assert ".consent {\n        width: fit-content;" in html
-    assert 'class="photo-thumb" id="photoThumb" hidden' in html
-    assert "const photoThumb = document.getElementById('photoThumb');" in html
-    assert "function setPhotoThumb(src)" in html
-    assert "function renderPendingAvatarLayers(src)" in html
-    assert "preview-chip-pending" in html
-    assert "renderPendingAvatarLayers(selectedPhotoPreviewUrl);" in html
-    assert "setPhotoThumb(selectedPhotoPreviewUrl);" in html
-    assert "setPhotoThumb('');" in html
-    assert "avatarLayers.classList.add('is-pending')" in html
-    assert "avatarLayers.classList.remove('is-pending')" in html
-    assert 'class="avatar-layers" id="avatarLayers" hidden' in html
-    assert "updateAvatarLayersVisibility" in html
-    assert "avatarLayers.hidden = Boolean(stateStrip.hidden && viewStrip.hidden)" in html
-    assert '<span class="avatar-layer-label">状态</span>' in html
-    assert '<span class="avatar-layer-label">视角</span>' in html
-    assert "viewLabels" in html
-    assert "以后我在桌面上转身时，会用这组角色角度。" in html
-    assert "chip.setAttribute('aria-label', `${stateLabels[state] || state}状态`)" in html
-    assert "chip.setAttribute('aria-label', `${viewLabels[view] || view}视角`)" in html
-    assert "playAvatarFrames(item.frames, item.src)" in html
-    assert "previewAnimationTimer = window.setInterval" in html
-    assert "renderViewStrip(activeManifest)" in html
-    assert "chip.dataset.state = state" in html
-    assert "chip.dataset.view = view" in html
-    assert "orbit-nav" in html
-    assert "data-step-jump=\"0\"" in html
-    assert "Exploration-stage pass" in html
-    assert "Transparent-avatar-stage pass" in html
-    assert ".progress-row {\n        display: none !important;" in html
-    assert ".desktop-frame::before {\n        display: none;" in html
-    assert "Final-avatar-dialogue pass" in html
-    assert ".ambient-status,\n      .progress-row,\n      .avatar-meta,\n      .mini-list {\n        display: none !important;" in html
-    assert "body.has-photo-preview #nextButton" in html
-    assert "body.has-photo-preview .dialogue-step .lead" in html
-    assert "function setUploadPreviewPhase(phase)" in html
-    assert "document.body.dataset.uploadPreview = value" in html
-    assert "preview.dataset.uploadPreview = value" in html
-    assert "document.body.dataset.previewMode = src ? previewMode : 'placeholder';" in html
-    assert "setUploadPreviewPhase('source')" in html
-    assert "setUploadPreviewPhase('empty');" in html
-    assert "setUploadPreviewPhase('generating')" in html
-    assert "setUploadPreviewPhase('generated')" in html
-    assert "setUploadPreviewPhase('source-error')" in html
-    assert "setUploadPreviewPhase('desktop')" in html
-    assert 'body[data-upload-preview="source"] .desktop-frame' in html
-    assert 'body[data-upload-preview="generated"] .desktop-frame' in html
-    assert "@keyframes pickedPulse" in html
-    assert ".avatar-card,\n      .avatar-stage,\n      .desktop-frame,\n      .summary,\n      .model-form" in html
-    assert ".avatar-meta,\n      .mini-list" in html
-    assert "clip: rect(0 0 0 0)" in html
-    assert "'waiting_approval', 'success', 'error', 'sleep'" in html
-    assert "setPreviewImage(item.src, 'avatar')" in html
-    assert "setupCompleted = true" in html
-    assert "Desktop-handoff pass" in html
-    assert "document.body.classList.add('has-entered-desktop')" in html
-    assert "window.__jiumeSetupCompleted = true" in html
-    assert "桌面分身已生成；launcher 会把这个人形分身放到桌面。悬浮它先看四个入口。" in html
-    assert "桌面分身已生成，正在交给 launcher 放到桌面。" in html
-    assert "悬浮它，只会先展开聊天、设置、技能、进度四个入口。" in html
-    assert "nextLabel.textContent = '桌面待命'" in html
-    assert "先创建你的桌面分身，之后再挂 skill。" in html
-    assert "本地生成可用" in html
-    assert "summaryName.textContent = providerReady ? '图片模型已连接' : '本地照片生成';" in html
-    assert "summaryPurpose.textContent = '四个入口';" in html
-    assert "summaryName.textContent = providerReady ? '已连接' : '待连接';" not in html
-    assert "summaryPurpose.textContent = '进入后设置';" not in html
-    assert "未填写 API Key，将使用本地照片生成。" in html
-    for retired_copy in (
-        "照片可选",
-        "不上传也能先用默认形象",
-        "默认形象",
-        "本地 mock 可用",
-        "代表我处理会议",
-        "API Key 是唯一必填项",
-        "请输入 API Key 后继续",
-    ):
-        assert retired_copy not in html
 
 
-def test_native_setup_window_is_step_wizard_with_preview_and_collapsed_advanced_options() -> None:
+
+def test_native_setup_window_is_pet_import_wizard() -> None:
     setup_source = Path("jiume/setup/server.py").read_text(encoding="utf-8")
 
     assert "SETUP_WIZARD_STEPS" in setup_source
-    assert "SETUP_PROGRESS_STAGES" in setup_source
-    assert '"runtime": "runtime"' in setup_source
-    assert '("runtime", "Agent")' in setup_source
-    assert 'self.current_step = "photo"' in setup_source
-    assert "self.advanced_visible = tk.BooleanVar(value=False)" in setup_source
-    assert "self.photo_preview_label" in setup_source
-    assert "self.generated_preview_label" in setup_source
-    assert "def _set_step(self, step: str)" in setup_source
-    assert "def _set_progress_stage(self, stage: str)" in setup_source
-    assert "def _render_runtime_step(self)" in setup_source
-    assert "def _refresh_runtime_status(self," in setup_source
-    assert "def _runtime_diagnostic(self)" in setup_source
-    assert "check_gateway_health(DEFAULT_GATEWAY_URL" in setup_source
-    assert "runtime_diagnostic_from_health" in setup_source
-    assert "def _open_runtime_config(self)" in setup_source
-    assert "def _load_photo_preview(self, path: Path)" in setup_source
-    assert "def _toggle_advanced_options(self)" in setup_source
-    assert "Base URL / 模型（可选）" in setup_source
-    assert "self.controller.create_twin_from_photo(" in setup_source
-    assert "lambda s=stage, a=attempt_id: self._handle_generation_progress(a, s)" in setup_source
+    assert '("pet", "enable")' in setup_source
+    assert 'self.current_step = "pet"' in setup_source
+    assert "self.pet_path = tk.StringVar" in setup_source
+    assert "def _choose_pet_dir(self)" in setup_source
+    assert "def _choose_pet_zip(self)" in setup_source
+    assert "def _load_pet_preview(self, path: Path)" in setup_source
+    assert "self.controller.create_twin_from_pet(" in setup_source
+    assert "create_twin_from_photo" not in setup_source
+    assert "Base URL" not in setup_source
 
 
-def test_native_setup_window_uses_premium_fixed_layout_and_synced_progress() -> None:
+def test_native_setup_window_uses_premium_fixed_layout_and_import_progress() -> None:
     setup_source = Path("jiume/setup/server.py").read_text(encoding="utf-8")
 
     assert "PREMIUM_SETUP_COLORS" in setup_source
     assert "SETUP_STEP_TO_STAGE" in setup_source
-    assert "def _sync_progress_stage_for_step(self, step: str)" in setup_source
-    assert "self._sync_progress_stage_for_step(step)" in setup_source
-    assert "self._set_progress_stage(\"model\")" in setup_source
     assert "self.progress_canvas" in setup_source
-    assert "self.stage_canvas" in setup_source
     assert "def _draw_progress_track(self)" in setup_source
-    assert "def _draw_generation_track(self)" in setup_source
     assert "self.content_frame.grid_propagate(False)" in setup_source
-    assert "self.footer_frame.grid_propagate(False)" in setup_source
-    assert "sticky=\"sew\"" in setup_source
+    assert 'sticky="sew"' in setup_source
     assert "ttk.Progressbar" not in setup_source
-    assert "#147d82" not in setup_source
-    assert "#dce9ea" not in setup_source
-
-
-def test_native_setup_window_generation_flow_has_attempt_guard_timer_and_cancel() -> None:
-    setup_source = Path("jiume/setup/server.py").read_text(encoding="utf-8")
-
-    assert "self.generation_attempt_id" in setup_source
-    assert "self.generation_cancelled" in setup_source
-    assert "self.generation_started_at" in setup_source
-    assert "self.generation_detail = tk.StringVar" in setup_source
-    assert "self.generation_failure = tk.StringVar" in setup_source
-    assert "def _cancel_generation(self)" in setup_source
-    assert "def _retry_generation(self)" in setup_source
-    assert "def _tick_generation_timer(self, attempt_id: str)" in setup_source
-    assert "def _generation_failed(self, attempt_id: str, error: BaseException | str)" in setup_source
-    assert "def _generation_succeeded(self, attempt_id: str, result: dict[str, Any])" in setup_source
-    assert "if attempt_id != self.generation_attempt_id or self.generation_cancelled" in setup_source
-    assert "lambda e=exc" in setup_source
-    assert "已取消。本次图片模型返回会被忽略。" in setup_source
+    assert "stage_canvas" not in setup_source
 
 
 def test_native_setup_buttons_avoid_platform_native_white_button_rendering() -> None:
     setup_source = Path("jiume/setup/server.py").read_text(encoding="utf-8")
 
-    assert "def _make_button(self, parent: tk.Widget, *, text: str, command: Callable[[], None], variant: str) -> tk.Label" in setup_source
+    assert "def _make_button(self, parent: tk.Widget" in setup_source
     assert "tk.Button(" not in setup_source
-    assert "button.bind(\"<Button-1>\", invoke)" in setup_source
-    assert "button.bind(\"<Return>\", invoke)" in setup_source
-    assert "disabledforeground" in setup_source
+    assert 'button.bind("<Button-1>"' in setup_source
 
 
-def test_openai_avatar_prompt_keeps_jiume_human_not_pet() -> None:
-    prompt = _openai_avatar_prompt({"displayName": "阿眠", "purpose": "桌面个人分身助手"})
+def test_avatar_generation_code_is_removed() -> None:
+    service_source = Path("jiume/avatar/service.py").read_text(encoding="utf-8")
+    setup_source = Path("jiume/setup/server.py").read_text(encoding="utf-8")
+    app_source = Path("jiume/desktop/app.py").read_text(encoding="utf-8")
 
-    assert "person-shaped human desktop twin" in prompt
-    assert "This is not a pet" in prompt
-    assert "animal ears" in prompt
-    assert "mascot" in prompt
-    assert "阿眠" in prompt
-    assert "桌面个人分身助手" in prompt
+    for removed in ("generate_mock_avatar", "generate_openai_avatar", "upload_source", "_openai", "JIUME_OPENAI"):
+        assert removed not in service_source
+    assert "图片模型" not in setup_source
+    assert "重画我" not in app_source
+
 
 
 def test_avatar_asset_path_blocks_traversal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3105,11 +2099,11 @@ def test_native_settings_update_parser_handles_conversational_changes() -> None:
 
 
 def test_native_avatar_makeover_command_handles_person_like_appearance_requests() -> None:
-    assert _native_avatar_makeover_command("重画一下你") == "redraw"
-    assert _native_avatar_makeover_command("刷新你的形象") == "redraw"
+    assert _native_avatar_makeover_command("重画一下你") is None
+    assert _native_avatar_makeover_command("刷新你的形象") is None
     assert _native_avatar_makeover_command("换套衣服") == "next_appearance"
     assert _native_avatar_makeover_command("换个样子") == "next_appearance"
-    assert _native_avatar_makeover_command("refresh your avatar") == "redraw"
+    assert _native_avatar_makeover_command("refresh your avatar") is None
     assert _native_avatar_makeover_command("change your outfit") == "next_appearance"
     assert _native_avatar_makeover_command("帮我重画一张产品图") is None
     assert _native_avatar_makeover_command("帮我设计一个头像") is None
@@ -5085,7 +4079,7 @@ def test_direct_settings_snapshot_and_payload_are_avatar_ready() -> None:
     assert "self._direct_settings_visible = False" in close_settings_source
     assert "destroy()" not in close_settings_source
     settings_source = app_source.split("def _rebuild_direct_settings_card", 1)[1].split(
-        "def _refresh_mock_avatar_assets",
+        "def _save_direct_settings",
         1,
     )[0]
     assert "_pack_direct_bubble_buttons" in settings_source
@@ -5227,7 +4221,6 @@ def test_settings_center_sections_cover_full_configuration() -> None:
     assert [section["id"] for section in SETTINGS_CENTER_SECTIONS] == [
         "profile",
         "desktop",
-        "image_model",
         "skills",
         "artifacts",
         "history",
@@ -5236,7 +4229,6 @@ def test_settings_center_sections_cover_full_configuration() -> None:
     assert [section["label"] for section in SETTINGS_CENTER_SECTIONS] == [
         "分身",
         "桌面",
-        "图片模型",
         "技能",
         "产物",
         "历史",
@@ -5251,7 +4243,7 @@ def test_settings_center_window_class_is_setup_style_not_transcript() -> None:
     assert 'self.window.title("JiuMe 设置")' in source
     assert "PREMIUM_SETUP_COLORS" in source
     assert "SETTINGS_CENTER_SECTIONS" in source
-    assert "_render_image_model_section" in source
+    assert "_render_image_model_section" not in source
     assert "_render_diagnostics_section" in source
     assert "_render_profile_section" in source
     assert "_render_desktop_section" in source
@@ -5338,7 +4330,8 @@ def test_native_onboarding_prompt_keeps_first_run_inside_avatar_ui() -> None:
 
     assert prompt["label"] == "先完成原生配置窗口"
     assert "小九" in prompt["detail"]
-    assert "上传照片" in prompt["detail"]
+    assert "Codex pet 包" in prompt["detail"]
+    assert "上传照片" not in prompt["detail"]
     assert "启用" in prompt["detail"]
     assert "桌面只保留头像" in prompt["detail"]
     assert "聊天、设置、技能、进度四个入口" not in prompt["detail"]

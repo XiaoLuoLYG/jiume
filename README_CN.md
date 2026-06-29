@@ -55,13 +55,10 @@ uv pip install -e ".[test]"
 3. JiuMe 桌面头像出现。
 4. 你可以单击头像并发送一句话任务。
 
-第一次本地运行不需要 API Key。之后如果想接入生成头像或托管模型，可以在 Setup 里填写，也可以导出环境变量：
+第一次本地运行不需要 API Key。头像资产来自 Codex pet 包：用本机 `hatch-pet` skill 生成，或下载现成 Codex pet 项目，然后在 Setup 里导入目录或 ZIP：
 
 ```bash
-export JIUME_OPENAI_API_KEY="..."
-export JIUME_OPENAI_BASE_URL="https://api.openai.com/v1"
-export JIUME_IMAGE_MODEL="gpt-image-2"
-export JIUME_IMAGE_PROVIDER="auto"
+.venv/bin/jiume-setup --pet ~/.codex/pets/my-pet --enable
 ```
 
 如果只想离线查看头像 UI：

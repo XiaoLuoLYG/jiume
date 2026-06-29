@@ -69,18 +69,15 @@ JiuMe 会把 Agent 过程映射成简单状态：idle、thinking、working、wai
 .venv/bin/jiume-state sleep
 ```
 
-## 可选图片服务
+## 头像 Pet 包
 
-图片生成是可选能力。没有配置凭证时，JiuMe 仍会使用本地头像资产打开。
+JiuMe 不再在应用内生成头像。请用 `hatch-pet` 生成 Codex pet，或下载现成 Codex pet 包，然后导入目录或 ZIP：
 
 ```bash
-export JIUME_OPENAI_API_KEY="..."
-export JIUME_OPENAI_BASE_URL="https://api.openai.com/v1"
-export JIUME_IMAGE_MODEL="gpt-image-2"
-export JIUME_IMAGE_PROVIDER="auto"
+.venv/bin/jiume-setup --pet ~/.codex/pets/my-pet --enable
 ```
 
-Setup 也可以把这些值保存到 `~/.jiuwenswarm/jiume/config.env`。
+包内需要包含 `pet.json` 和 `spritesheet.webp`。
 
 ## 本地数据
 

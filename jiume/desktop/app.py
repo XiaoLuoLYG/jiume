@@ -21,7 +21,15 @@ from urllib.parse import unquote, urlparse
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-from jiume.avatar.service import AVATAR_VIEW_NAMES, CODEX_PET_STATE_ALIASES, DESKTOP_STATES, AvatarService
+from jiume.avatar.service import (
+    AVATAR_VIEW_NAMES,
+    CODEX_CELL,
+    CODEX_GRID,
+    CODEX_PET_FRAME_COUNTS,
+    CODEX_PET_STATE_ALIASES,
+    DESKTOP_STATES,
+    AvatarService,
+)
 from jiume.desktop.actions import quick_action_by_id, quick_actions
 from jiume.desktop.overlay import (
     AVATAR_DRAG_THRESHOLD_PX,
@@ -459,7 +467,7 @@ DIRECT_SETTINGS_SECTIONS = (
     {"id": "identity", "label": "身份", "detail": "先确认我是谁、主要陪你做什么。"},
     {"id": "tone", "label": "语气", "detail": "选择我和你说话时的节奏。"},
     {"id": "permission", "label": "权限", "detail": "决定我行动前要不要先问你。"},
-    {"id": "appearance", "label": "外观", "detail": "换衣服、重画当前分身资产。"},
+    {"id": "appearance", "label": "外观", "detail": "记录外观偏好；形象资产来自 Codex pet 包。"},
     {"id": "size", "label": "大小", "detail": "调整我在桌面上的存在感。"},
 )
 DIRECT_SKILL_SECTIONS = (
@@ -501,6 +509,36 @@ def _state_file(manifest: dict[str, Any], state: str, frame_index: int = 0) -> P
                 return Path(file_path)
     file_path = item.get("file")
     return Path(file_path) if isinstance(file_path, str) and file_path else None
+
+
+def _sprite_frame(manifest: dict[str, Any], state: str, frame_index: int = 0) -> tuple[Path, tuple[int, int, int, int]] | None:
+    pack = manifest.get("spritePack")
+    if not isinstance(pack, dict):
+        return None
+    spritesheet = str(pack.get("spritesheet") or "").strip()
+    if not spritesheet:
+        return None
+    sheet_path = Path(spritesheet)
+    if not sheet_path.is_absolute():
+        manifest_path = Path(str(pack.get("manifest") or ""))
+        if manifest_path.is_absolute():
+            sheet_path = manifest_path.parent / sheet_path
+    states = manifest.get("states")
+    if not isinstance(states, dict):
+        return None
+    state_key = CODEX_PET_STATE_ALIASES.get(str(state or "").strip(), str(state or "").strip()) or "idle"
+    item = states.get(state_key) or states.get("idle")
+    if not isinstance(item, dict):
+        return None
+    try:
+        row = int(item.get("row") if item.get("row") is not None else DESKTOP_STATES.index(state_key))
+    except (ValueError, TypeError):
+        row = 0
+    frame_count = int(item.get("frames") or CODEX_PET_FRAME_COUNTS.get(state_key) or CODEX_PET_FRAME_COUNTS["idle"])
+    frame_count = max(1, min(frame_count, CODEX_GRID[0]))
+    column = frame_index % frame_count
+    width, height = CODEX_CELL
+    return sheet_path, (column * width, row * height, (column + 1) * width, (row + 1) * height)
 
 
 def _avatar_manifest_signature(manifest: dict[str, Any] | None) -> str:
@@ -3335,26 +3373,6 @@ def _native_avatar_makeover_command(message: str) -> str | None:
     )
     if any(token in lower or token in text for token in task_tokens):
         return None
-    redraw_tokens = (
-        "重画我",
-        "重画一下我",
-        "重画一下你",
-        "重新画一下你",
-        "重新生成你",
-        "重生成你",
-        "刷新形象",
-        "刷新你的形象",
-        "刷新一下形象",
-        "重新生成形象",
-        "redraw yourself",
-        "refresh your avatar",
-        "regenerate your avatar",
-    )
-    for token in redraw_tokens:
-        needle = token.lower().replace(" ", "").replace("-", "").replace("_", "") if token.isascii() else token.replace(" ", "")
-        haystack = compact_lower if token.isascii() else compact_text
-        if needle in haystack:
-            return "redraw"
     next_tokens = (
         "换个样子",
         "换个造型",
@@ -4283,7 +4301,7 @@ def _native_onboarding_prompt(twin: dict[str, Any] | None) -> dict[str, str]:
     return {
         "label": "先完成原生配置窗口",
         "detail": (
-            f"我先叫「{name}」。先上传照片并用图片模型生成分身，点“启用”后我才会常驻桌面。"
+            f"我先叫「{name}」。先导入 Codex pet 包，点“启用”后我才会常驻桌面。"
             "之后桌面只保留头像；单击和我说话，右键打开设置或退出。"
         ),
     }
@@ -5331,7 +5349,13 @@ class JiuMeDesktopAvatar:
             self._native_onboarding_pending = True
             return
         self._active_twin_id = active
-        self._manifest = self.avatars.get_manifest(active)
+        try:
+            self._manifest = self.avatars.get_manifest(active)
+        except (FileNotFoundError, KeyError, OSError, ValueError):
+            self._manifest = None
+            self._avatar_cache.clear()
+            self._native_onboarding_pending = True
+            return
         self._avatar_cache.clear()
         self.set_state("idle")
 
@@ -5504,7 +5528,16 @@ class JiuMeDesktopAvatar:
         target = str(twin_id or active or "").strip()
         if not target or active != target:
             return False
-        next_manifest = self.avatars.get_manifest(target)
+        try:
+            next_manifest = self.avatars.get_manifest(target)
+        except (FileNotFoundError, KeyError, OSError, ValueError):
+            self._active_twin_id = target
+            self._manifest = None
+            self._native_onboarding_pending = True
+            self._avatar_cache.clear()
+            self.set_state("idle")
+            self._refresh_twin_name()
+            return False
         current_signature = _avatar_manifest_signature(self._manifest)
         next_signature = _avatar_manifest_signature(next_manifest)
         changed = target != self._active_twin_id or bool(next_signature and next_signature != current_signature)
@@ -6748,6 +6781,22 @@ class JiuMeDesktopAvatar:
             return None
         state_key = str(state or "").strip()
         frame_index = 0 if state_key == "idle" else self._animation_frame
+        sprite = _sprite_frame(self._manifest, state_key, frame_index)
+        if sprite is not None:
+            sheet_path, box = sprite
+            try:
+                cache_key = f"atlas:{sheet_path.resolve()}:{sheet_path.stat().st_mtime_ns}"
+            except OSError:
+                cache_key = ""
+            atlas = self._avatar_cache.get(cache_key) if cache_key else None
+            if atlas is None and cache_key:
+                try:
+                    atlas = Image.open(sheet_path).convert("RGBA")
+                    self._avatar_cache[cache_key] = atlas
+                except Exception:
+                    atlas = None
+            if atlas is not None:
+                return atlas.crop(box)
         path = _state_file(self._manifest, state_key, frame_index)
         if path is None or not path.exists():
             path = _state_file(self._manifest, "idle", 0)
@@ -9567,15 +9616,11 @@ class JiuMeDesktopAvatar:
                     "label": "换一层",
                 }
             )
-        if section_id == "appearance":
-            action_items.append({"id": "redraw", "label": "重画我"})
         self._pack_direct_bubble_buttons(
             self._direct_settings_frame,
             action_items,
             lambda item: (
-                self._regenerate_mock_avatar_from_direct()
-                if str(item.get("id") or "") == "redraw"
-                else self._toggle_direct_settings_picker()
+                self._toggle_direct_settings_picker()
                 if str(item.get("id") or "") == "layers"
                 else self._focus_direct_entry_for_settings()
                 if str(item.get("id") or "") == "talk"
@@ -9594,17 +9639,6 @@ class JiuMeDesktopAvatar:
             except tk.TclError:
                 pass
         self.show_bubble("直接说一句就行，比如“以后叫你小九”或“用途改成写作搭档”。", state="speaking", duration=5200)
-
-    def _refresh_mock_avatar_assets(self, twin_id: str, *, error_label: str = "重画失败") -> bool:
-        try:
-            self.avatars.generate_mock_avatar(twin_id)
-            self._manifest = self.avatars.get_manifest(twin_id)
-            self._avatar_cache.clear()
-            self._render_avatar_frame()
-            return True
-        except Exception as exc:  # noqa: BLE001
-            self.show_bubble(f"{error_label}：{_clip(str(exc), 70)}", state="error", duration=4200)
-            return False
 
     def _save_direct_settings(self, *, close_card: bool = True) -> dict[str, Any] | None:
         twin = self._active_twin()
@@ -9633,12 +9667,6 @@ class JiuMeDesktopAvatar:
             return None
         self._active_twin_id = updated["id"]
         self._refresh_twin_name()
-        appearance_changed = normalize_twin_appearance(updated.get("appearance"))["id"] != before["appearanceId"]
-        if appearance_changed:
-            self.set_state("working")
-            if not self._refresh_mock_avatar_assets(updated["id"]):
-                return None
-            self.set_state("success")
         if close_card:
             self._direct_settings_visible = False
             self._direct_settings_detail_visible = False
@@ -9652,7 +9680,7 @@ class JiuMeDesktopAvatar:
                 "assistant",
                 f"我会用「{_permission_mode_label(mode)}」的权限、新语气和「{appearance_label}」外观配合你。",
             )
-            self.show_bubble("好，我记住了，外观也同步到桌面分身。", state="success", duration=3000)
+            self.show_bubble("好，我记住了。桌面形象继续使用当前 Codex pet 包。", state="success", duration=3000)
         return updated
 
     def _apply_native_settings_update(self, update: dict[str, Any]) -> None:
@@ -9684,11 +9712,6 @@ class JiuMeDesktopAvatar:
                     ),
                 )
                 self._active_twin_id = updated["id"]
-                if "appearance" in update:
-                    self.set_state("working")
-                    if not self._refresh_mock_avatar_assets(updated["id"]):
-                        return
-                    self.set_state("success")
         except Exception as exc:  # noqa: BLE001
             self.show_bubble(f"保存失败：{_clip(str(exc), 70)}", state="error", duration=4200)
             return
@@ -9709,7 +9732,7 @@ class JiuMeDesktopAvatar:
         if "defaultMode" in update:
             change_lines.append(f"权限改成「{_permission_mode_label(mode)}」")
         if "appearance" in update:
-            change_lines.append(f"衣服换成「{twin_appearance_label(updated.get('appearance'))}」")
+            change_lines.append(f"外观偏好记为「{twin_appearance_label(updated.get('appearance'))}」")
         if "size" in update:
             change_lines.append(f"桌面大小改成「{_avatar_size_label(self.size)}」")
         reply = "我记住了：" + "，".join(change_lines) + "。"
@@ -9725,41 +9748,33 @@ class JiuMeDesktopAvatar:
             return
 
         key = str(command or "").strip()
-        updated = twin
-        if key == "next_appearance":
-            appearance = _next_appearance_preset(twin.get("appearance"))
-            try:
-                updated = self.store.update_twin(
-                    twin["id"],
-                    _direct_settings_payload(
-                        str(twin.get("tone") or ""),
-                        str((twin.get("permissions") or {}).get("defaultMode") or "confirm_before_act")
-                        if isinstance(twin.get("permissions"), dict)
-                        else "confirm_before_act",
-                        display_name=str(twin.get("displayName") or "JiuMe"),
-                        purpose=str(twin.get("purpose") or ""),
-                        appearance=appearance,
-                    ),
-                )
-                self._active_twin_id = updated["id"]
-            except Exception as exc:  # noqa: BLE001
-                self.show_bubble(f"换衣服失败：{_clip(str(exc), 70)}", state="error", duration=4200)
-                return
-            if self._direct_appearance_var:
-                self._direct_appearance_var.set(appearance["id"])
-
-        self.set_state("working")
-        if not self._refresh_mock_avatar_assets(updated["id"], error_label="重画失败"):
+        if key != "next_appearance":
+            self.show_bubble("JiuMe 现在只导入 Codex pet 包，不在桌面里生成形象。", state="speaking", duration=4200)
             return
-        self.set_state("success")
+        appearance = _next_appearance_preset(twin.get("appearance"))
+        try:
+            updated = self.store.update_twin(
+                twin["id"],
+                _direct_settings_payload(
+                    str(twin.get("tone") or ""),
+                    str((twin.get("permissions") or {}).get("defaultMode") or "confirm_before_act")
+                    if isinstance(twin.get("permissions"), dict)
+                    else "confirm_before_act",
+                    display_name=str(twin.get("displayName") or "JiuMe"),
+                    purpose=str(twin.get("purpose") or ""),
+                    appearance=appearance,
+                ),
+            )
+            self._active_twin_id = updated["id"]
+        except Exception as exc:  # noqa: BLE001
+            self.show_bubble(f"保存外观偏好失败：{_clip(str(exc), 70)}", state="error", duration=4200)
+            return
+        if self._direct_appearance_var:
+            self._direct_appearance_var.set(appearance["id"])
         self._rebuild_direct_settings_card()
         label = twin_appearance_label(updated.get("appearance"))
-        if key == "next_appearance":
-            reply = f"好，我换成「{label}」这套衣服，并把桌面形象重画好了。"
-            title = "换一套形象"
-        else:
-            reply = "好，我按现在的名字、用途和外观重新画好了。"
-            title = "重画形象"
+        reply = f"好，我把外观偏好记为「{label}」。桌面形象继续使用当前 Codex pet 包。"
+        title = "记录外观偏好"
         self._append_chat("assistant", reply)
         self._record_activity("interaction", title, reply)
         if self._last_action:
@@ -9767,20 +9782,6 @@ class JiuMeDesktopAvatar:
         self.show_bubble(reply, state="success", duration=3400)
         self._start_interaction_effect("dance")
         self.root.after(1400, lambda: self.set_state("idle"))
-
-    def _regenerate_mock_avatar_from_direct(self) -> None:
-        updated = self._save_direct_settings(close_card=False)
-        if not updated:
-            return
-        self.set_state("working")
-        if not self._refresh_mock_avatar_assets(updated["id"]):
-            return
-        self.set_state("success")
-        self._direct_settings_visible = False
-        self._rebuild_direct_settings_card()
-        self._append_chat("assistant", "我按新的名字、用途和外观重画好了。")
-        self.show_bubble("我按新的名字、用途和外观重画好了。", state="success", duration=3000)
-        self.root.after(1300, lambda: self.set_state("idle"))
 
     def _rebuild_quick_action_rows(self) -> None:
         # Legacy boxed quick actions are retired; starts now live in direct avatar bubbles.

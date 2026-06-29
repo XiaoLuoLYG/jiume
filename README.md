@@ -55,13 +55,10 @@ What should happen:
 3. The JiuMe desktop avatar appears.
 4. You can click the avatar and send a one-line task.
 
-No API key is required for the first local run. If you later want generated avatars or hosted model providers, add credentials in Setup or export:
+No API key is required for the first local run. Avatar art comes from a Codex pet package. Generate one with the local `hatch-pet` skill or download an existing Codex pet project, then import the folder or ZIP in Setup:
 
 ```bash
-export JIUME_OPENAI_API_KEY="..."
-export JIUME_OPENAI_BASE_URL="https://api.openai.com/v1"
-export JIUME_IMAGE_MODEL="gpt-image-2"
-export JIUME_IMAGE_PROVIDER="auto"
+.venv/bin/jiume-setup --pet ~/.codex/pets/my-pet --enable
 ```
 
 For a UI-only smoke test:
