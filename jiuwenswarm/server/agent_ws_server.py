@@ -66,6 +66,7 @@ from jiuwenswarm.common.config import (
     update_sandbox_runtime,
     upsert_mcp_server_in_config,
 )
+from jiuwenswarm.common.mcp_transport import normalize_mcp_transport
 from jiuwenswarm.server.sandbox.jiuwenbox_runner import JiuwenBoxRunner
 from jiuwenswarm.common.security.ws_origin import (
     extract_handshake_request,
@@ -2181,7 +2182,7 @@ class AgentWebSocketServer:
         from openjiuwen.core.runner.resources_manager.tool_manager import ToolMgr
 
         name = server_payload.get("name", "")
-        transport = server_payload.get("transport", "")
+        transport = normalize_mcp_transport(server_payload.get("transport", ""))
 
         # Build McpServerConfig (same logic as _fetch_mcp_tools_from_config)
         payload: dict[str, Any] = {"server_name": name, "client_type": transport}
@@ -2206,6 +2207,9 @@ class AgentWebSocketServer:
             params = {}
             if isinstance(server_payload.get("headers"), dict):
                 params["headers"] = {str(k): str(v) for k, v in server_payload["headers"].items()}
+            timeout_s = server_payload.get("timeout_s")
+            if isinstance(timeout_s, (int, float)) and int(timeout_s) > 0:
+                params["timeout_s"] = int(timeout_s)
             if params:
                 payload["params"] = params
 
@@ -2235,8 +2239,8 @@ class AgentWebSocketServer:
         from openjiuwen.core.runner.resources_manager.tool_manager import ToolMgr
 
         name = str(entry.get("name", "")).strip()
-        transport = str(entry.get("transport", "")).strip().lower()
-        if not name or transport not in {"stdio", "sse"}:
+        transport = normalize_mcp_transport(entry.get("transport", ""))
+        if not name or not transport:
             logger.warning("[command.mcp] _fetch skipped: name=%r transport=%r", name, transport)
             return []
 
@@ -2259,12 +2263,15 @@ class AgentWebSocketServer:
         else:
             url = str(entry.get("url", "")).strip()
             if not url:
-                logger.warning("[command.mcp] _fetch skipped: no url for sse")
+                logger.warning("[command.mcp] _fetch skipped: no url for %s", transport)
                 return []
             payload["server_path"] = url
             params = {}
             if isinstance(entry.get("headers"), dict):
                 params["headers"] = {str(k): str(v) for k, v in entry["headers"].items()}
+            timeout_s = entry.get("timeout_s")
+            if isinstance(timeout_s, (int, float)) and int(timeout_s) > 0:
+                params["timeout_s"] = int(timeout_s)
             if params:
                 payload["params"] = params
 
@@ -2301,11 +2308,11 @@ class AgentWebSocketServer:
         merged = dict(current or {})
         merged.update(params)
         name = str(merged.get("name", "")).strip()
-        transport = str(merged.get("transport", "")).strip().lower()
+        transport = normalize_mcp_transport(merged.get("transport", ""))
         if not name:
             raise ValueError("MCP server name is required")
-        if transport not in {"stdio", "sse"}:
-            raise ValueError("transport must be one of stdio|sse")
+        if not transport:
+            raise ValueError("transport must be one of stdio|sse|streamable_http")
 
         payload: dict[str, Any] = {
             "name": name,

@@ -310,6 +310,27 @@ async def test_handle_command_mcp_add_triggers_reload(server, fake_ws, monkeypat
     ]
 
 
+def test_handle_command_mcp_accepts_luckin_streamablehttp_alias(server):
+    payload = server._normalize_mcp_add_payload(
+        {
+            "name": "luckin",
+            "transport": "streamablehttp",
+            "url": "https://mcp.luckin.example/mcp",
+            "headers": {"Authorization": "Bearer ${JIUME_LUCKIN_MCP_TOKEN}"},
+            "timeout_s": 30,
+        }
+    )
+
+    assert payload == {
+        "name": "luckin",
+        "enabled": True,
+        "transport": "streamable_http",
+        "url": "https://mcp.luckin.example/mcp",
+        "headers": {"Authorization": "Bearer ${JIUME_LUCKIN_MCP_TOKEN}"},
+        "timeout_s": 30,
+    }
+
+
 @pytest.mark.asyncio
 async def test_handle_command_mcp_enable_not_found(server, fake_ws, monkeypatch):
     def _raise_not_found(_name, _enabled):

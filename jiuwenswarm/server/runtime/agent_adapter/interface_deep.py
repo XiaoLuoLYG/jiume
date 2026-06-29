@@ -69,6 +69,7 @@ from openjiuwen.harness.tools import (
     create_vision_tools,
     TodoModifyTool,
 )
+from jiuwenswarm.common.mcp_transport import normalize_mcp_transport
 
 try:
     from openjiuwen.harness.tools import is_paid_search_enabled
@@ -847,8 +848,8 @@ class JiuWenClawDeepAdapter:
         name = str(entry.get("name", "")).strip()
         if not name:
             return None
-        transport = str(entry.get("transport", "")).strip().lower()
-        if transport not in {"stdio", "sse"}:
+        transport = normalize_mcp_transport(entry.get("transport", ""))
+        if not transport:
             return None
         payload: dict[str, Any] = {
             "server_name": name,
