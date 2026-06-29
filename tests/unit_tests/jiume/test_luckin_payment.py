@@ -282,12 +282,18 @@ def test_luckin_gateway_event_payment_deeplink_rejects_qr_and_http() -> None:
     qr_only = GatewayEvent(
         kind="event",
         event="chat.tool_result",
-        payload={"result": {"payOrderQrCodeUrl": "https://opentest03.lkcoffee.com/transfer/qrcode?token=qr"}},
+        payload={
+            "name": "createOrder",
+            "result": {"payOrderQrCodeUrl": "https://opentest03.lkcoffee.com/transfer/qrcode?token=qr"},
+        },
     )
     http_pay = GatewayEvent(
         kind="event",
         event="chat.tool_result",
-        payload={"result": {"payOrderUrl": "https://opentest03.lkcoffee.com/pay"}},
+        payload={
+            "name": "createOrder",
+            "result": {"payOrderUrl": "https://opentest03.lkcoffee.com/pay"},
+        },
     )
 
     assert gateway_event_payment_deeplink(qr_only) == ""
@@ -308,6 +314,50 @@ def test_luckin_gateway_event_payment_deeplink_ignores_plain_artifacts() -> None
 
     assert gateway_event_payment_deeplink(top_level_target) == ""
     assert gateway_event_payment_deeplink(artifact_target) == ""
+
+
+def test_luckin_payment_deeplink_requires_create_order_result() -> None:
+    final_artifact = GatewayEvent(
+        kind="event",
+        event="chat.final",
+        payload={"artifacts": [{"paymentUrl": "weixin://wxpay/bizpayurl?pr=abc", "name": "微信支付"}]},
+    )
+    final_metadata = GatewayEvent(
+        kind="event",
+        event="chat.final",
+        payload={"metadata": {"paymentUrl": "weixin://wxpay/bizpayurl?pr=abc"}},
+    )
+    unnamed_tool_result = GatewayEvent(
+        kind="event",
+        event="chat.tool_result",
+        payload={"result": {"payOrderUrl": "weixin://wxpay/bizpayurl?pr=abc"}},
+    )
+    nested_result = GatewayEvent(
+        kind="event",
+        event="chat.tool_result",
+        payload={
+            "name": "createOrder",
+            "result": {"metadata": {"payOrderUrl": "weixin://wxpay/bizpayurl?pr=abc"}},
+        },
+    )
+
+    assert gateway_event_payment_deeplink(final_artifact) == ""
+    assert gateway_event_payment_deeplink(final_metadata) == ""
+    assert gateway_event_payment_deeplink(unnamed_tool_result) == ""
+    assert gateway_event_payment_deeplink(nested_result) == ""
+
+
+def test_luckin_payment_deeplink_accepts_create_order_json_result() -> None:
+    event = GatewayEvent(
+        kind="event",
+        event="chat.tool_result",
+        payload={
+            "tool_name": "createOrder",
+            "result": json.dumps({"payOrderUrl": "weixin://wxpay/bizpayurl?pr=json"}),
+        },
+    )
+
+    assert gateway_event_payment_deeplink(event) == "weixin://wxpay/bizpayurl?pr=json"
 
 
 def test_luckin_trusted_payment_deeplink_allows_only_wechat_pay() -> None:
@@ -379,7 +429,7 @@ def test_luckin_payment_deeplink_open_is_deduped_and_redacted(monkeypatch) -> No
     event = GatewayEvent(
         kind="event",
         event="chat.tool_result",
-        payload={"result": {"payOrderUrl": "weixin://wxpay/bizpayurl?pr=abc"}},
+        payload={"name": "createOrder", "result": {"payOrderUrl": "weixin://wxpay/bizpayurl?pr=abc"}},
     )
 
     JiuMeDesktopAvatar._maybe_open_payment_deeplink(avatar, event)
@@ -422,7 +472,7 @@ def test_luckin_payment_deeplink_retries_after_failed_open(monkeypatch) -> None:
     event = GatewayEvent(
         kind="event",
         event="chat.tool_result",
-        payload={"result": {"payOrderUrl": "weixin://wxpay/bizpayurl?pr=abc"}},
+        payload={"name": "createOrder", "result": {"payOrderUrl": "weixin://wxpay/bizpayurl?pr=abc"}},
     )
 
     JiuMeDesktopAvatar._maybe_open_payment_deeplink(avatar, event)

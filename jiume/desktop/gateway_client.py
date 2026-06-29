@@ -21,7 +21,8 @@ CODE_SUFFIXES = {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json", 
 TABLE_SUFFIXES = {".csv", ".tsv", ".xlsx", ".xls"}
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".log", ".rst"}
 TRUSTED_PAYMENT_DEEPLINK_PREFIXES = ("weixin://wxpay/",)
-PAYMENT_DEEPLINK_KEYS = {"payOrderUrl", "pay_order_url", "paymentUrl", "payment_url"}
+PAYMENT_DEEPLINK_KEYS = ("payOrderUrl", "pay_order_url", "paymentUrl", "payment_url")
+PAYMENT_TOOL_NAMES = {"createOrder"}
 
 
 @dataclass(frozen=True)
@@ -190,28 +191,40 @@ def trusted_payment_deeplink(value: Any) -> bool:
     return any(text.startswith(prefix) for prefix in TRUSTED_PAYMENT_DEEPLINK_PREFIXES)
 
 
-def _iter_payment_deeplink_values(value: Any) -> list[Any]:
+def _event_tool_name(payload: dict[str, Any]) -> str:
+    return str(payload.get("toolName") or payload.get("tool_name") or payload.get("name") or "").strip()
+
+
+def _result_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
-        values: list[Any] = []
-        for key, item in value.items():
-            if key in PAYMENT_DEEPLINK_KEYS:
-                values.append(item)
-            values.extend(_iter_payment_deeplink_values(item))
-        return values
-    if isinstance(value, list):
-        values = []
-        for item in value:
-            values.extend(_iter_payment_deeplink_values(item))
-        return values
-    return []
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
-def gateway_event_payment_deeplink(event: GatewayEvent) -> str:
-    for value in _iter_payment_deeplink_values(event.payload or {}):
-        target = str(value or "").strip()
+def _payment_deeplink_from_result(result: dict[str, Any]) -> str:
+    for key in PAYMENT_DEEPLINK_KEYS:
+        target = str(result.get(key) or "").strip()
         if trusted_payment_deeplink(target):
             return target
     return ""
+
+
+def gateway_event_payment_deeplink(event: GatewayEvent) -> str:
+    if event.kind != "event" or event.event != "chat.tool_result":
+        return ""
+    payload = event.payload or {}
+    if _event_tool_name(payload) not in PAYMENT_TOOL_NAMES:
+        return ""
+    target = _payment_deeplink_from_result(_result_mapping(payload.get("result")))
+    if target:
+        return target
+    return _payment_deeplink_from_result(_result_mapping(payload.get("raw_output") or payload.get("rawOutput")))
 
 
 def _artifact_category(*, label: str, target: str, preview: str, explicit_type: str = "") -> str:

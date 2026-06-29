@@ -11338,7 +11338,7 @@ class JiuMeDesktopAvatar:
         if state:
             self.set_state(state)
 
-        if event.kind == "event" and event.event in {"chat.tool_result", "chat.final"}:
+        if event.kind == "event" and event.event == "chat.tool_result":
             self._maybe_open_payment_deeplink(event)
 
         if event.kind == "response":
