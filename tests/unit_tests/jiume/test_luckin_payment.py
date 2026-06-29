@@ -12,6 +12,8 @@ from jiume.luckin.mcp_config import (
     ensure_luckin_mcp_config,
     luckin_mcp_server_payload,
 )
+from jiume.runtime.context import _context_block
+from jiume.skills.catalog import LUCKIN_ORDER_SKILL_ID, recommended_skill_by_id
 
 
 def test_luckin_mcp_payload_uses_token_placeholder(monkeypatch) -> None:
@@ -28,6 +30,47 @@ def test_luckin_mcp_payload_uses_token_placeholder(monkeypatch) -> None:
         "timeout_s": 30,
     }
     assert "local-test-token" not in json.dumps(payload)
+
+
+def test_luckin_order_skill_is_recommended() -> None:
+    skill = recommended_skill_by_id(LUCKIN_ORDER_SKILL_ID)
+
+    assert skill is not None
+    assert skill["category"] == "食"
+    assert skill["risk"] == "high"
+    assert "瑞幸" in skill["displayName"]
+
+
+def test_luckin_order_skill_adds_prompt_boundary() -> None:
+    profile = {
+        "id": "local-test-twin",
+        "displayName": "Local Test",
+        "purpose": "Test",
+        "tone": "plain",
+        "permissions": {"defaultMode": "ask", "allowedSkillIds": [LUCKIN_ORDER_SKILL_ID]},
+    }
+
+    block = _context_block(profile, query="帮我点一杯常喝的瑞幸")
+
+    assert "Luckin official MCP" in block
+    assert "WeChat Pay confirmation is the payment approval" in block
+    assert "Do not use QR code payment as the default path" in block
+
+
+def test_luckin_order_boundary_requires_mounted_skill() -> None:
+    profile = {
+        "id": "local-test-twin",
+        "displayName": "Local Test",
+        "purpose": "Test",
+        "tone": "plain",
+        "permissions": {"defaultMode": "ask", "allowedSkillIds": []},
+    }
+
+    block = _context_block(profile, query="帮我点一杯常喝的瑞幸")
+
+    assert "Luckin official MCP" not in block
+    assert "WeChat Pay confirmation is the payment approval" not in block
+    assert "Do not use QR code payment as the default path" not in block
 
 
 def test_luckin_mcp_config_skips_without_token(monkeypatch) -> None:

@@ -6,7 +6,7 @@ from typing import Any
 
 from jiume.audit.logger import append_audit_event
 from jiume.personal_distillation.engine import PersonalDistillationEngine
-from jiume.skills.catalog import mounted_skill_cards
+from jiume.skills.catalog import LUCKIN_ORDER_SKILL_ID, mounted_skill_cards
 from jiume.twins.store import TwinStore
 
 
@@ -38,6 +38,17 @@ def _context_block(profile: dict[str, Any], *, query: str = "") -> str:
     twin_id = str(profile.get("id") or "").strip()
     distilled_text = _distilled_context_text(twin_id, query=query) if twin_id else ""
     distilled_block = f"{distilled_text}\n" if distilled_text else ""
+    luckin_note = ""
+    if LUCKIN_ORDER_SKILL_ID in skill_ids:
+        luckin_note = (
+            "Luckin official MCP exception: use only these Luckin official MCP tools when needed: "
+            "queryShopList, searchProductForMcp, switchProduct, queryProductDetailInfo, "
+            "previewOrder, createOrder, queryOrderDetailInfo. If previewOrder is clear and within policy, "
+            "opening returned `weixin://wxpay/` payOrderUrl is allowed. "
+            "The user's WeChat Pay confirmation is the payment approval. "
+            "Ask before createOrder only when store/item/price/coupon/address/token ambiguous. "
+            "Do not use QR code payment as the default path.\n"
+        )
     return (
         "[JiuMe Twin Context]\n"
         f"Name: {profile.get('displayName')}\n"
@@ -47,6 +58,7 @@ def _context_block(profile: dict[str, Any], *, query: str = "") -> str:
         f"Long-term memories:\n{memory_text}\n"
         f"Mounted skills:\n{skill_text}\n"
         f"{distilled_block}"
+        f"{luckin_note}"
         "When the user asks for work that matches a mounted skill, route the task through that skill, "
         "ask for missing materials, and summarize the active skill you chose. Do not claim an unmounted skill is active.\n"
         "Represent the user only within these permissions. Ask before external actions, irreversible changes, "

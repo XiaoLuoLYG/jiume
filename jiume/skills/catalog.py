@@ -11,6 +11,7 @@ from typing import Any
 SWARM_SKILLS_SOURCE = "https://swarmskills.openjiuwen.com/"
 SWARM_SKILLS_API = "https://swarmskills.openjiuwen.com/api/v1/skills"
 SKILL_FILTER_ALL = "全部"
+LUCKIN_ORDER_SKILL_ID = "jiume-luckin-order"
 
 RECOMMENDED_SKILLS: list[dict[str, Any]] = [
     {
@@ -131,6 +132,16 @@ RECOMMENDED_SKILLS: list[dict[str, Any]] = [
         "summary": "面向代码和系统变更的安全审计团队，适合合并前检查。",
         "whyJiume": "适合作为高风险动作前的守门 skill，需要审批提示。",
         "installsAllTime": 322,
+        "stars": 0,
+    },
+    {
+        "id": LUCKIN_ORDER_SKILL_ID,
+        "displayName": "瑞幸下单支付助手",
+        "category": "食",
+        "risk": "high",
+        "summary": "通过瑞幸官方 MCP 查询门店、选择商品、预览订单、创建订单，并打开返回的微信支付 deeplink。",
+        "whyJiume": "适合演示 JiuMe 的食物佣人和支付守门能力；用户只在微信支付里最终确认一次。",
+        "installsAllTime": 0,
         "stars": 0,
     },
 ]
