@@ -6,6 +6,7 @@ import pytest
 from jiuwenswarm.server import agent_ws_server as agent_ws_server_module
 from jiuwenswarm.common.schema.agent import AgentRequest
 from jiuwenswarm.common.schema.message import ReqMethod
+from jiuwenswarm.server.runtime.agent_adapter.interface_deep import JiuWenClawDeepAdapter
 
 
 class FakeWebSocket:
@@ -329,6 +330,22 @@ def test_handle_command_mcp_accepts_luckin_streamablehttp_alias(server):
         "headers": {"Authorization": "Bearer ${JIUME_LUCKIN_MCP_TOKEN}"},
         "timeout_s": 30,
     }
+
+
+def test_build_mcp_server_config_maps_streamable_headers_to_auth_headers():
+    cfg = JiuWenClawDeepAdapter._build_mcp_server_config(
+        {
+            "name": "luckin",
+            "transport": "streamablehttp",
+            "url": "https://mcp.luckin.example/mcp",
+            "headers": {"Authorization": "Bearer ${JIUME_LUCKIN_MCP_TOKEN}"},
+            "timeout_s": 30,
+        }
+    )
+
+    assert cfg is not None
+    assert cfg.client_type == "streamable_http"
+    assert cfg.auth_headers == {"Authorization": "Bearer ${JIUME_LUCKIN_MCP_TOKEN}"}
 
 
 @pytest.mark.asyncio

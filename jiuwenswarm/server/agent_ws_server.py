@@ -2206,7 +2206,7 @@ class AgentWebSocketServer:
             payload["server_path"] = url
             params = {}
             if isinstance(server_payload.get("headers"), dict):
-                params["headers"] = {str(k): str(v) for k, v in server_payload["headers"].items()}
+                payload["auth_headers"] = {str(k): str(v) for k, v in server_payload["headers"].items()}
             timeout_s = server_payload.get("timeout_s")
             if isinstance(timeout_s, (int, float)) and int(timeout_s) > 0:
                 params["timeout_s"] = int(timeout_s)
@@ -2268,7 +2268,7 @@ class AgentWebSocketServer:
             payload["server_path"] = url
             params = {}
             if isinstance(entry.get("headers"), dict):
-                params["headers"] = {str(k): str(v) for k, v in entry["headers"].items()}
+                payload["auth_headers"] = {str(k): str(v) for k, v in entry["headers"].items()}
             timeout_s = entry.get("timeout_s")
             if isinstance(timeout_s, (int, float)) and int(timeout_s) > 0:
                 params["timeout_s"] = int(timeout_s)

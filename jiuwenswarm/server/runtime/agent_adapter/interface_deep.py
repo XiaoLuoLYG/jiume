@@ -882,7 +882,7 @@ class JiuWenClawDeepAdapter:
             params: dict[str, Any] = {}
             headers = entry.get("headers")
             if isinstance(headers, dict):
-                params["headers"] = {str(k): str(v) for k, v in headers.items()}
+                payload["auth_headers"] = {str(k): str(v) for k, v in headers.items()}
             timeout_s = entry.get("timeout_s")
             if isinstance(timeout_s, (int, float)) and int(timeout_s) > 0:
                 params["timeout_s"] = int(timeout_s)
