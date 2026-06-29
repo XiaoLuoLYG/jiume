@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from jiume.desktop.app import DEFAULT_AGENT_MODE, DEFAULT_GATEWAY_URL, JiuMeDesktopAvatar
 from jiume.desktop.state import set_service_status
+from jiume.luckin.mcp_config import ensure_luckin_mcp_config
 from jiume.paths import get_jiume_root
 from jiume.runtime.status import runtime_config_url
 from jiume.twins.store import TwinStore
@@ -532,6 +533,10 @@ def main() -> None:
         web_host=args.web_host,
         web_port=args.web_port,
     )
+    if plan.agent_command:
+        luckin_config = ensure_luckin_mcp_config()
+        if luckin_config.get("configured"):
+            print(f"[jiume-launch] Luckin MCP configured: {luckin_config.get('name')}")
 
     log_dir = get_jiume_root() / "logs"
     processes: list[ManagedProcess] = []
