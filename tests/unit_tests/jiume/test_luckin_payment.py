@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import jiume.launcher as jiume_launcher
+from jiume.launcher import LaunchPlan
 from jiume.luckin.mcp_config import (
     LUCKIN_MCP_NAME,
     LUCKIN_MCP_URL,
@@ -77,3 +79,45 @@ def test_luckin_mcp_config_skips_upsert_when_existing_matches(monkeypatch) -> No
         "created": False,
         "name": LUCKIN_MCP_NAME,
     }
+
+
+def test_luckin_launcher_bootstrap_is_non_fatal_for_managed_agent(monkeypatch, capsys) -> None:
+    calls = 0
+
+    def raise_config_error() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("local-test-token should not leak")
+
+    monkeypatch.setattr(jiume_launcher, "ensure_luckin_mcp_config", raise_config_error)
+    plan = LaunchPlan(
+        setup_command=None,
+        agent_command=["/python", "-m", "jiuwenswarm.app"],
+        web_command=None,
+        wait_for_gateway=True,
+        runtime_config_url="http://localhost:5173/?panel=config",
+    )
+
+    jiume_launcher._bootstrap_luckin_mcp_for_launch(plan)
+
+    out = capsys.readouterr().out
+    assert calls == 1
+    assert "Luckin MCP bootstrap skipped (RuntimeError)" in out
+    assert "local-test-token" not in out
+    assert "Authorization" not in out
+
+
+def test_luckin_launcher_bootstrap_skips_without_managed_agent(monkeypatch) -> None:
+    def fail_config() -> dict[str, Any]:
+        raise AssertionError("should not bootstrap Luckin MCP without managed agent")
+
+    monkeypatch.setattr(jiume_launcher, "ensure_luckin_mcp_config", fail_config)
+    plan = LaunchPlan(
+        setup_command=None,
+        agent_command=None,
+        web_command=None,
+        wait_for_gateway=False,
+        runtime_config_url="http://localhost:5173/?panel=config",
+    )
+
+    jiume_launcher._bootstrap_luckin_mcp_for_launch(plan)

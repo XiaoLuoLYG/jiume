@@ -177,6 +177,18 @@ def _build_launch_plan(
     )
 
 
+def _bootstrap_luckin_mcp_for_launch(plan: LaunchPlan) -> None:
+    if not plan.agent_command:
+        return
+    try:
+        luckin_config = ensure_luckin_mcp_config()
+    except Exception as exc:
+        print(f"[jiume-launch] warning: Luckin MCP bootstrap skipped ({type(exc).__name__})")
+        return
+    if luckin_config.get("configured"):
+        print(f"[jiume-launch] Luckin MCP configured: {luckin_config.get('name')}")
+
+
 def _child_env() -> dict[str, str]:
     env = os.environ.copy()
     source_root = str(_source_root())
@@ -533,10 +545,6 @@ def main() -> None:
         web_host=args.web_host,
         web_port=args.web_port,
     )
-    if plan.agent_command:
-        luckin_config = ensure_luckin_mcp_config()
-        if luckin_config.get("configured"):
-            print(f"[jiume-launch] Luckin MCP configured: {luckin_config.get('name')}")
 
     log_dir = get_jiume_root() / "logs"
     processes: list[ManagedProcess] = []
@@ -551,6 +559,8 @@ def main() -> None:
         restart_enabled=not args.no_service_restart,
     )
     try:
+        _bootstrap_luckin_mcp_for_launch(plan)
+
         if plan.setup_command:
             processes.append(_start_process("setup", plan.setup_command, log_dir))
 
