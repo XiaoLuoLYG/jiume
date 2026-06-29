@@ -3,7 +3,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import jiume.desktop.app as desktop_app
 import jiume.launcher as jiume_launcher
+from jiume.desktop.app import JiuMeDesktopAvatar
+from jiume.desktop.gateway_client import (
+    GatewayEvent,
+    gateway_event_artifacts,
+    gateway_event_payment_deeplink,
+    trusted_payment_deeplink,
+)
 from jiume.launcher import LaunchPlan
 from jiume.luckin.mcp_config import (
     LUCKIN_MCP_NAME,
@@ -167,3 +175,102 @@ def test_luckin_launcher_bootstrap_skips_without_managed_agent(monkeypatch) -> N
     )
 
     jiume_launcher._bootstrap_luckin_mcp_for_launch(plan)
+
+
+def test_luckin_gateway_event_payment_deeplink_prefers_trusted_pay_url() -> None:
+    event = GatewayEvent(
+        kind="event",
+        event="chat.tool_result",
+        payload={
+            "name": "createOrder",
+            "result": {
+                "orderIdStr": "local-test-order",
+                "payOrderUrl": "weixin://wxpay/bizpayurl?pr=abc",
+                "payOrderQrCodeUrl": "https://opentest03.lkcoffee.com/transfer/qrcode?token=qr",
+            },
+        },
+    )
+
+    assert gateway_event_payment_deeplink(event) == "weixin://wxpay/bizpayurl?pr=abc"
+
+
+def test_luckin_gateway_event_payment_deeplink_rejects_qr_and_http() -> None:
+    qr_only = GatewayEvent(
+        kind="event",
+        event="chat.tool_result",
+        payload={"result": {"payOrderQrCodeUrl": "https://opentest03.lkcoffee.com/transfer/qrcode?token=qr"}},
+    )
+    http_pay = GatewayEvent(
+        kind="event",
+        event="chat.tool_result",
+        payload={"result": {"payOrderUrl": "https://opentest03.lkcoffee.com/pay"}},
+    )
+
+    assert gateway_event_payment_deeplink(qr_only) == ""
+    assert gateway_event_payment_deeplink(http_pay) == ""
+
+
+def test_luckin_trusted_payment_deeplink_allows_only_wechat_pay() -> None:
+    assert trusted_payment_deeplink("weixin://wxpay/bizpayurl?pr=abc")
+    assert not trusted_payment_deeplink("weixin://not-pay")
+
+
+def test_luckin_payment_artifact_is_payment_url() -> None:
+    event = GatewayEvent(
+        kind="event",
+        event="chat.final",
+        payload={"artifacts": [{"target": "weixin://wxpay/bizpayurl?pr=abc", "name": "微信支付"}]},
+    )
+
+    artifacts = gateway_event_artifacts(event)
+
+    assert artifacts[0]["category"] == "payment"
+    assert artifacts[0]["kind"] == "url"
+
+
+def test_luckin_desktop_opens_trusted_wechat_pay_target(monkeypatch) -> None:
+    avatar = object.__new__(JiuMeDesktopAvatar)
+    opened: list[str] = []
+    avatar.show_bubble = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(desktop_app.webbrowser, "open", opened.append)
+
+    JiuMeDesktopAvatar._open_activity_target(avatar, "weixin://wxpay/bizpayurl?pr=abc")
+
+    assert opened == ["weixin://wxpay/bizpayurl?pr=abc"]
+
+
+def test_luckin_payment_deeplink_open_is_deduped_and_redacted(monkeypatch) -> None:
+    avatar = object.__new__(JiuMeDesktopAvatar)
+    avatar._opened_payment_deeplinks = set()
+    avatar._active_twin_id = "local-test-twin"
+    bubbles: list[str] = []
+    activities: list[tuple[str, str, str]] = []
+    audits: list[tuple[str, str, dict[str, Any]]] = []
+    opened: list[str] = []
+    avatar.show_bubble = lambda text, **_kwargs: bubbles.append(str(text))
+    avatar._record_activity = lambda kind, title, detail="": activities.append((kind, title, detail))
+    monkeypatch.setattr(desktop_app.webbrowser, "open", lambda target: opened.append(target) or True)
+    monkeypatch.setattr(
+        desktop_app,
+        "append_audit_event",
+        lambda twin_id, event_type, payload: audits.append((twin_id, event_type, payload)),
+    )
+    event = GatewayEvent(
+        kind="event",
+        event="chat.tool_result",
+        payload={"result": {"payOrderUrl": "weixin://wxpay/bizpayurl?pr=abc"}},
+    )
+
+    JiuMeDesktopAvatar._maybe_open_payment_deeplink(avatar, event)
+    JiuMeDesktopAvatar._maybe_open_payment_deeplink(avatar, event)
+
+    assert opened == ["weixin://wxpay/bizpayurl?pr=abc"]
+    assert bubbles == []
+    assert activities == [("payment", "打开微信支付", "我已打开微信支付，请在微信里确认。")]
+    assert audits == [
+        (
+            "local-test-twin",
+            "luckin.payment_deeplink_opened",
+            {"scheme": "weixin", "target": "weixin://wxpay/[redacted]"},
+        )
+    ]

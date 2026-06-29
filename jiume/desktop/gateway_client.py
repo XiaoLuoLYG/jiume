@@ -20,6 +20,8 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"}
 CODE_SUFFIXES = {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json", ".yaml", ".yml", ".toml", ".sql", ".sh"}
 TABLE_SUFFIXES = {".csv", ".tsv", ".xlsx", ".xls"}
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".log", ".rst"}
+TRUSTED_PAYMENT_DEEPLINK_PREFIXES = ("weixin://wxpay/",)
+PAYMENT_DEEPLINK_KEYS = {"payOrderUrl", "pay_order_url", "paymentUrl", "payment_url"}
 
 
 @dataclass(frozen=True)
@@ -183,9 +185,44 @@ def _artifact_suffix(target: str, label: str) -> str:
     return Path(value).suffix.lower()
 
 
+def trusted_payment_deeplink(value: Any) -> bool:
+    text = str(value or "").strip()
+    return any(text.startswith(prefix) for prefix in TRUSTED_PAYMENT_DEEPLINK_PREFIXES)
+
+
+def _iter_payment_deeplink_values(value: Any) -> list[Any]:
+    if isinstance(value, dict):
+        values: list[Any] = []
+        for key, item in value.items():
+            if key in PAYMENT_DEEPLINK_KEYS:
+                values.append(item)
+            values.extend(_iter_payment_deeplink_values(item))
+        return values
+    if isinstance(value, list):
+        values = []
+        for item in value:
+            values.extend(_iter_payment_deeplink_values(item))
+        return values
+    return []
+
+
+def gateway_event_payment_deeplink(event: GatewayEvent) -> str:
+    for value in _iter_payment_deeplink_values(event.payload or {}):
+        target = str(value or "").strip()
+        if trusted_payment_deeplink(target):
+            return target
+    for artifact in gateway_event_artifacts(event):
+        target = str(artifact.get("target") or "").strip()
+        if trusted_payment_deeplink(target):
+            return target
+    return ""
+
+
 def _artifact_category(*, label: str, target: str, preview: str, explicit_type: str = "") -> str:
     type_hint = explicit_type.lower()
     suffix = _artifact_suffix(target, label)
+    if trusted_payment_deeplink(target):
+        return "payment"
     if "image" in type_hint or suffix in IMAGE_SUFFIXES:
         return "image"
     if "spreadsheet" in type_hint or "csv" in type_hint or suffix in TABLE_SUFFIXES:
@@ -210,7 +247,7 @@ def gateway_event_artifacts(event: GatewayEvent) -> list[dict[str, str]]:
             raw_items.append(raw)
         elif isinstance(raw, str) and raw.strip():
             raw_items.append(raw)
-    if any(key in payload for key in ("path", "file_path", "filePath", "url", "uri", "href")):
+    if any(key in payload for key in ("path", "file_path", "filePath", "target", "url", "uri", "href")):
         raw_items.append(payload)
 
     artifacts: list[dict[str, str]] = []
@@ -237,6 +274,7 @@ def gateway_event_artifacts(event: GatewayEvent) -> list[dict[str, str]]:
                 item.get("path")
                 or item.get("file_path")
                 or item.get("filePath")
+                or item.get("target")
                 or item.get("url")
                 or item.get("uri")
                 or item.get("href")
@@ -255,7 +293,13 @@ def gateway_event_artifacts(event: GatewayEvent) -> list[dict[str, str]]:
         if not target or target in seen:
             continue
         seen.add(target)
-        kind = "inline" if target.startswith("inline:") else "url" if target.startswith(("http://", "https://", "file://")) else "file"
+        kind = (
+            "inline"
+            if target.startswith("inline:")
+            else "url"
+            if trusted_payment_deeplink(target) or target.startswith(("http://", "https://", "file://"))
+            else "file"
+        )
         label = label or target
         artifact = {
             "label": label,

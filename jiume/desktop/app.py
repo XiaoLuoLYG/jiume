@@ -21,6 +21,7 @@ from urllib.parse import unquote, urlparse
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+from jiume.audit.logger import append_audit_event
 from jiume.avatar.service import (
     AVATAR_VIEW_NAMES,
     CODEX_CELL,
@@ -51,7 +52,9 @@ from jiume.desktop.gateway_client import (
     answers_for_decision,
     desktop_state_for_gateway_event,
     gateway_event_artifacts,
+    gateway_event_payment_deeplink,
     gateway_event_text,
+    trusted_payment_deeplink,
 )
 from jiume.desktop.interactions import interaction_actions, interaction_by_id
 from jiume.desktop.menus import (
@@ -5328,6 +5331,7 @@ class JiuMeDesktopAvatar:
         self._typing_timer: str | None = None
         self._gateway_reply = ""
         self._pending_approval: dict[str, Any] | None = None
+        self._opened_payment_deeplinks: set[str] = set()
         self._native_onboarding_pending = False
         self._load_initial()
         self._load_companion_memory()
@@ -10831,7 +10835,7 @@ class JiuMeDesktopAvatar:
             return
         try:
             path = Path(value).expanduser()
-            if value.startswith(("http://", "https://", "file://")):
+            if trusted_payment_deeplink(value) or value.startswith(("http://", "https://", "file://")):
                 webbrowser.open(value)
             elif path.exists():
                 webbrowser.open(path.resolve().as_uri())
@@ -10839,6 +10843,27 @@ class JiuMeDesktopAvatar:
                 self.show_bubble(f"找不到产物：{_clip(value, 58)}", state="error", duration=3200)
         except Exception as exc:  # noqa: BLE001
             self.show_bubble(f"打不开产物：{_clip(str(exc), 58)}", state="error", duration=3200)
+
+    def _maybe_open_payment_deeplink(self, event: GatewayEvent) -> None:
+        target = gateway_event_payment_deeplink(event)
+        if not target or target in self._opened_payment_deeplinks:
+            return
+        self._opened_payment_deeplinks.add(target)
+        try:
+            opened = webbrowser.open(target)
+        except Exception as exc:  # noqa: BLE001
+            self.show_bubble(f"打不开微信支付：{_clip(str(exc), 58)}", state="error", duration=3200)
+            return
+        if not opened:
+            self.show_bubble("打不开微信支付，请手动确认支付链接。", state="error", duration=3200)
+            return
+        if self._active_twin_id:
+            append_audit_event(
+                self._active_twin_id,
+                "luckin.payment_deeplink_opened",
+                {"scheme": "weixin", "target": "weixin://wxpay/[redacted]"},
+            )
+        self._record_activity("payment", "打开微信支付", "我已打开微信支付，请在微信里确认。")
 
     def _rebuild_skill_rows(self) -> None:
         # Legacy boxed skill shelf is retired; skills now use the layered direct bubble flow.
@@ -11311,6 +11336,9 @@ class JiuMeDesktopAvatar:
         capsule = capsule_for_gateway_event(event, current_reply=self._gateway_reply)
         if state:
             self.set_state(state)
+
+        if event.kind == "event" and event.event in {"chat.tool_result", "chat.final"}:
+            self._maybe_open_payment_deeplink(event)
 
         if event.kind == "response":
             if event.ok:
