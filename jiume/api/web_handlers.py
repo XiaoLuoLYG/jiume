@@ -7,7 +7,8 @@ from typing import Any, Awaitable, Callable
 
 from jiume.audit.logger import read_audit_events
 from jiume.avatar.service import AvatarService
-from jiume.distill.service import DistillService
+from jiume.personal_distillation.engine import PersonalDistillationEngine
+from jiume.personal_distillation.models import DistillationJob
 from jiume.twins.store import TwinStore
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ def _twin_id(params: dict[str, Any], store: TwinStore) -> str:
 def register_jiume_handlers(channel: Any) -> None:
     store = TwinStore()
     avatars = AvatarService(store)
-    distill = DistillService(store)
+    distill = PersonalDistillationEngine(store=store, twins_root=getattr(store, "root", None))
 
     async def _send(ws: Any, req_id: str, ok: bool, payload: dict[str, Any] | None = None,
                     error: str | None = None, code: str | None = None) -> None:
@@ -48,6 +49,9 @@ def register_jiume_handlers(channel: Any) -> None:
                 logger.exception("[jiume] RPC failed: %s", exc)
                 await _send(ws, req_id, False, error=str(exc), code="INTERNAL_ERROR")
         return _handler
+
+    def _job(job: DistillationJob) -> dict[str, Any]:
+        return job.to_dict()
 
     channel.register_method(
         "twin.list",
@@ -98,23 +102,23 @@ def register_jiume_handlers(channel: Any) -> None:
 
     channel.register_method(
         "twin.distill.create",
-        _wrap(lambda p: {"job": distill.create_job(_twin_id(p, store), p)}),
+        _wrap(lambda p: {"job": _job(distill.create_job(_twin_id(p, store), p))}),
     )
     channel.register_method(
         "twin.distill.list",
-        _wrap(lambda p: {"jobs": distill.list_jobs(_twin_id(p, store))}),
+        _wrap(lambda p: {"jobs": [_job(job) for job in distill.list_jobs(_twin_id(p, store))]}),
     )
     channel.register_method(
         "twin.distill.get",
-        _wrap(lambda p: {"job": distill.get_job(_twin_id(p, store), str(p.get("job_id") or p.get("jobId") or ""))}),
+        _wrap(lambda p: {"job": _job(distill.get_job(_twin_id(p, store), str(p.get("job_id") or p.get("jobId") or "")))}),
     )
     channel.register_method(
         "twin.distill.test",
-        _wrap(lambda p: {"job": distill.test_job(_twin_id(p, store), str(p.get("job_id") or p.get("jobId") or ""))}),
+        _wrap(lambda p: {"job": _job(distill.test_job(_twin_id(p, store), str(p.get("job_id") or p.get("jobId") or "")))}),
     )
     channel.register_method(
         "twin.distill.install",
-        _wrap(lambda p: {"job": distill.install_job(_twin_id(p, store), str(p.get("job_id") or p.get("jobId") or ""))}),
+        _wrap(lambda p: {"job": _job(distill.install_job(_twin_id(p, store), str(p.get("job_id") or p.get("jobId") or "")))}),
     )
     channel.register_method(
         "twin.distill.reject",
@@ -124,7 +128,7 @@ def register_jiume_handlers(channel: Any) -> None:
                     _twin_id(p, store),
                     str(p.get("job_id") or p.get("jobId") or ""),
                     str(p.get("feedback") or ""),
-                )
+                ).to_dict()
             }
         ),
     )

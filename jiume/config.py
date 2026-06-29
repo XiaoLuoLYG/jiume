@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
-import shlex
 from dataclasses import dataclass
 from pathlib import Path
+
+from dotenv import dotenv_values, load_dotenv, set_key
 
 from jiume.paths import get_jiume_root
 
@@ -32,25 +33,8 @@ def get_config_env_path() -> Path:
 def load_jiume_env(*, override: bool = False) -> Path:
     path = get_config_env_path()
     if path.exists():
-        try:
-            from dotenv import load_dotenv
-
-            load_dotenv(path, override=override)
-        except Exception:
-            _load_simple_env(path, override=override)
+        load_dotenv(path, override=override)
     return path
-
-
-def _load_simple_env(path: Path, *, override: bool) -> None:
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if not key or (not override and key in os.environ):
-            continue
-        os.environ[key] = value.strip().strip('"').strip("'")
 
 
 def _first_env(keys: tuple[str, ...], default: str = "") -> tuple[str, str | None]:
@@ -79,19 +63,6 @@ def get_image_provider_config() -> ImageProviderConfig:
     )
 
 
-def _read_config_values(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not path.exists():
-        return values
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
-
-
 def write_image_provider_config(
     *,
     api_key: str | None = None,
@@ -99,7 +70,14 @@ def write_image_provider_config(
     model: str | None = None,
 ) -> Path:
     path = get_config_env_path()
-    values = _read_config_values(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(
+            "# Local JiuMe image provider config.\n"
+            "# This file is loaded by jiume-setup and the JiuMe desktop avatar. Do not commit it.\n",
+            encoding="utf-8",
+        )
+    values = {key: str(value) for key, value in dotenv_values(path).items() if value is not None}
     if api_key is not None:
         stripped = api_key.strip()
         if stripped:
@@ -110,15 +88,9 @@ def write_image_provider_config(
         values["JIUME_IMAGE_MODEL"] = model.strip() or "gpt-image-2"
 
     ordered_keys = ("JIUME_OPENAI_API_KEY", "JIUME_OPENAI_BASE_URL", "JIUME_IMAGE_MODEL")
-    lines = [
-        "# Local JiuMe image provider config.",
-        "# This file is loaded by jiume-setup and the JiuMe desktop avatar. Do not commit it.",
-    ]
     for key in ordered_keys:
         if key in values:
-            lines.append(f"{key}={shlex.quote(values[key])}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            set_key(str(path), key, values[key])
     load_jiume_env(override=True)
     return path
 

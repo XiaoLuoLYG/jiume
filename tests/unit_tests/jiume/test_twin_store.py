@@ -366,7 +366,6 @@ from jiume.desktop.state import (
     write_conversation_state,
     write_window_state,
 )
-from jiume.distill.service import DistillService
 from jiume.launcher import (
     LAUNCH_AGENT_LABEL,
     _build_launch_plan,
@@ -378,6 +377,7 @@ from jiume.launcher import (
     _release_launcher_lock,
     _should_open_desktop_avatar,
 )
+from jiume.personal_distillation.engine import PersonalDistillationEngine
 from jiume.runtime.context import enrich_gateway_message
 from jiume.skills.catalog import (
     RECOMMENDED_SKILLS,
@@ -1713,17 +1713,16 @@ def test_avatar_asset_path_blocks_traversal(tmp_path: Path, monkeypatch: pytest.
 def test_distill_job_install_enables_generated_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     skill_root = tmp_path / "agent" / "workspace" / "skills"
     monkeypatch.setattr("jiume.paths.get_twins_root", lambda: tmp_path / "twins")
-    monkeypatch.setattr("jiume.distill.service.get_agent_skills_dir", lambda: skill_root)
     store = TwinStore(root=tmp_path / "twins")
     twin = store.create_twin({"displayName": "Chen"})
 
-    service = DistillService(store)
-    job = service.create_job(twin["id"], {"goal": "Meeting minutes", "recipe": "Summarize decisions."})
-    installed = service.install_job(twin["id"], job["id"])
+    engine = PersonalDistillationEngine(store=store, twins_root=tmp_path / "twins", skills_dir=skill_root)
+    job = engine.create_job(twin["id"], {"goal": "Meeting minutes", "recipe": "Summarize decisions."})
+    installed = engine.install_job(twin["id"], job.id)
 
-    skill_name = installed["generated_skill"]["name"]
-    layers = {artifact["layer"] for artifact in installed["artifacts"]}
-    assert installed["status"] == "installed"
+    skill_name = installed.generated_skill["name"]
+    layers = {artifact.layer.value for artifact in installed.artifacts}
+    assert installed.status.value == "installed"
     assert {"profile", "style", "procedural", "personal_skill"}.issubset(layers)
     assert (skill_root / skill_name / "SKILL.md").exists()
     assert skill_name in store.get_twin(twin["id"])["permissions"]["allowedSkillIds"]

@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from jiume.distill.service import DistillService
 from jiume.api.web_handlers import register_jiume_handlers
 from jiume.personal_distillation.engine import PersonalDistillationEngine
 from jiume.personal_distillation.models import (
@@ -217,19 +216,18 @@ def test_context_block_includes_approved_distilled_layers(tmp_path: Path, monkey
     assert content.endswith("Help with today's notes.")
 
 
-def test_distill_service_reject_records_feedback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_distillation_engine_reject_records_feedback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     twins_root = _isolate_jiume_paths(monkeypatch, tmp_path)
     skills_dir = tmp_path / "agent" / "workspace" / "skills"
-    monkeypatch.setattr("jiume.distill.service.get_agent_skills_dir", lambda: skills_dir)
     store = TwinStore(root=twins_root)
     twin = store.create_twin({"id": "twin_reject", "displayName": "Ada", "selectedSkillIds": []})
-    service = DistillService(store)
-    job = service.create_job(twin["id"], {"goal": "Email triage", "recipe": "Sort and draft replies."})
+    engine = PersonalDistillationEngine(store=store, twins_root=twins_root, skills_dir=skills_dir)
+    job = engine.create_job(twin["id"], {"goal": "Email triage", "recipe": "Sort and draft replies."})
 
-    rejected = service.reject_job(twin["id"], job["id"], feedback="Too broad; keep only VIP senders.")
+    rejected = engine.reject_job(twin["id"], job.id, feedback="Too broad; keep only VIP senders.")
 
-    assert rejected["status"] == "rejected"
-    assert rejected["review"]["feedback"] == "Too broad; keep only VIP senders."
+    assert rejected.status == DistillationStatus.REJECTED
+    assert rejected.review["feedback"] == "Too broad; keep only VIP senders."
 
 
 def test_engine_imports_chat_history_tasks_and_redacts_sensitive_logs(
@@ -471,7 +469,7 @@ def test_rpc_reject_handler_passes_feedback(
 ) -> None:
     twins_root = _isolate_jiume_paths(monkeypatch, tmp_path)
     monkeypatch.setattr("jiume.api.web_handlers.TwinStore", lambda: TwinStore(root=twins_root))
-    monkeypatch.setattr("jiume.distill.service.get_agent_skills_dir", lambda: tmp_path / "skills")
+    monkeypatch.setattr("jiume.personal_distillation.engine.get_agent_skills_dir", lambda: tmp_path / "skills")
     channel = _FakeJiumeChannel()
     register_jiume_handlers(channel)
     twin = channel.methods["twin.create"]
