@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import importlib.util
 import json
+from pathlib import Path
 from typing import Any
 
 import jiume.desktop.app as desktop_app
@@ -22,6 +25,15 @@ from jiume.luckin.mcp_config import (
 )
 from jiume.runtime.context import _context_block
 from jiume.skills.catalog import LUCKIN_ORDER_SKILL_ID, recommended_skill_by_id
+
+
+def _load_luckin_verifier():
+    path = Path(__file__).parents[3] / "scripts" / "verify_luckin_mcp.py"
+    spec = importlib.util.spec_from_file_location("verify_luckin_mcp_for_test", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_luckin_mcp_payload_uses_token_placeholder(monkeypatch) -> None:
@@ -133,6 +145,78 @@ def test_luckin_mcp_config_skips_upsert_when_existing_matches(monkeypatch) -> No
         "created": False,
         "name": LUCKIN_MCP_NAME,
     }
+
+
+def test_luckin_verifier_missing_env_prints_only_env_name(monkeypatch, capsys) -> None:
+    verifier = _load_luckin_verifier()
+    monkeypatch.delenv(LUCKIN_TOKEN_ENV, raising=False)
+
+    assert verifier.main() == 1
+
+    out = capsys.readouterr().out.strip()
+    assert out == LUCKIN_TOKEN_ENV
+    assert "Authorization" not in out
+
+
+def test_luckin_verifier_missing_tools_returns_nonzero() -> None:
+    verifier = _load_luckin_verifier()
+
+    class FakeClient:
+        async def connect(self, **_kwargs):
+            return True
+
+        async def list_tools(self, **_kwargs):
+            return [{"name": "queryShopList"}]
+
+        async def disconnect(self, **_kwargs):
+            return True
+
+    code, summary = asyncio.run(verifier.verify("local-secret", make_client=lambda _token: FakeClient()))
+
+    assert code == 1
+    assert summary["ok"] is False
+    assert summary["tools"] == ["queryShopList"]
+    assert "createOrder" in summary["missing_tools"]
+    assert "local-secret" not in json.dumps(summary)
+
+
+def test_luckin_verifier_redacts_token_from_errors() -> None:
+    verifier = _load_luckin_verifier()
+
+    class FakeClient:
+        async def connect(self, **_kwargs):
+            raise RuntimeError("Bearer local-secret failed")
+
+        async def disconnect(self, **_kwargs):
+            return True
+
+    code, summary = asyncio.run(verifier.verify("local-secret", make_client=lambda _token: FakeClient()))
+
+    assert code == 1
+    assert summary["ok"] is False
+    assert summary["error_type"] == "RuntimeError"
+    assert "local-secret" not in json.dumps(summary)
+    assert "Bearer <redacted>" in summary["message"]
+
+
+def test_luckin_verifier_config_uses_auth_headers(monkeypatch) -> None:
+    verifier = _load_luckin_verifier()
+    from openjiuwen.core.runner.resources_manager.tool_manager import ToolMgr
+
+    captured: dict[str, Any] = {}
+
+    def fake_create_client(cfg):
+        captured["cfg"] = cfg
+        return object()
+
+    monkeypatch.setattr(ToolMgr, "_create_client", staticmethod(fake_create_client))
+
+    verifier._make_client("local-secret")
+
+    cfg = captured["cfg"]
+    assert cfg.auth_headers == {"Authorization": "Bearer local-secret"}
+    assert cfg.params == {"timeout_s": 30}
+    assert "Authorization" not in cfg.params
 
 
 def test_luckin_launcher_bootstrap_is_non_fatal_for_managed_agent(monkeypatch, capsys) -> None:
