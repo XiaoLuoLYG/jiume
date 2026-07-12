@@ -34,7 +34,7 @@ dependencies = [
     "wecom-aibot-sdk>=1.0.5",
     "python-socks>=2.8.1",
     "greenlet>=3.3.2",
-    "skillnet-ai==0.0.16",
+    "skillnet-ai==0.0.18",
     "mutagen>=1.47.0",
     "google-genai>=1.68.0",
     "opentelemetry-api>=1.25.0",
