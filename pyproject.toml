@@ -53,7 +53,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-a2a = ["a2a-sdk[http-server]==1.0.0"]
+a2a = ["a2a-sdk[http-server]==1.1.0"]
 desktop = ["pywebview>=5.4", "pyobjc-framework-Cocoa>=10.0"]
 dev = ["pyinstaller>=6.0.0", "pywebview>=5.4", "pyobjc-framework-Cocoa>=10.0"]
 tui = ["jiuwenswarm-tui==0.2.0"]
@@ -64,7 +64,7 @@ shell-ast = [
 ]
 # Same packages as [dependency-groups] test (pip install -e ".[test]")
 test = [
-    "a2a-sdk[http-server]==1.0.0",
+    "a2a-sdk[http-server]==1.1.0",
     "pytest>=8.3.5",
     "pytest-asyncio>=1.0.0",
     "pytest-html>=4.1.1",
@@ -138,7 +138,7 @@ dev = [
 ]
 # Testing (keep in sync with optional-dependencies.test)
 test = [
-    "a2a-sdk[http-server]==1.0.0",
+    "a2a-sdk[http-server]==1.1.0",
     "pytest>=8.3.5",
     "pytest-asyncio>=1.0.0",
     "pytest-html>=4.1.1",
